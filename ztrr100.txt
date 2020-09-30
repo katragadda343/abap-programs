@@ -1,0 +1,1306 @@
+*&---------------------------------------------------------------------*
+*& Report ZTRR0100
+*&---------------------------------------------------------------------*
+*&
+*&---------------------------------------------------------------------*
+*=======================================================================
+* Program          :  ZTRR0100
+* Created by       :  Ravi Teja Katragadda
+* Search on        :
+* Date             :  10 June 2019
+* Business Analyst :  Pankaj Jain
+* Project          :  Hedge Accounting Automation
+* PIR/PCR          :  PCR 9000020083
+* Description      :  To Display Comprehensive Hedge Relationship Data
+*=======================================================================
+*&---------------------------------------------------------------------*
+*                         MODIFICATION HISTORY
+*&---------------------------------------------------------------------*
+* Changed by       :
+* Search on        :
+* Date             :
+* Business Analyst :
+* Project          :
+* PIR/PCR          :
+* Description      :
+*&---------------------------------------------------------------------*
+REPORT ztrr0100 NO STANDARD PAGE HEADING.
+
+TYPE-POOLS: truxs.
+
+NODES : positions.
+
+TYPES: BEGIN OF t_positions.
+    INCLUDE STRUCTURE fti_ldb_tr_positions.
+TYPES: END OF t_positions.
+
+TYPES: BEGIN OF t_ident,
+         valuation_area TYPE dift_pos_ident-valuation_area,
+         company_code   TYPE dift_pos_ident-company_code,
+         product_type   TYPE dift_pos_ident-product_type,
+         security_id    TYPE dift_pos_ident-security_id,
+         deal_number    TYPE dift_pos_ident-deal_number,
+       END OF t_ident,
+
+       BEGIN OF t_hrel,
+         company_code  TYPE ztr_hrel-company_code,
+         hrel_number   TYPE ztr_hrel-hrel_number,
+         hinst_deal_no TYPE ztr_hrel-hinst_deal_no,
+         assgn_no      TYPE dzuonr,
+       END OF t_hrel,
+
+       BEGIN OF t_vtbfha,
+         bukrs  TYPE vtbfha-bukrs,
+         rfha   TYPE vtbfha-rfha,
+         rportb TYPE vtbfha-rportb,
+         rldepo TYPE vtbfha-rldepo,
+         ranl   TYPE vtbfha-ranl,
+         dblfz  TYPE vtbfha-dblfz,
+         delfz  TYPE vtbfha-delfz,
+         vrfha  TYPE vtbfha-vrfha,
+         refer  TYPE vtbfha-rfha,
+       END OF t_vtbfha.
+
+TYPES:BEGIN OF t_final.
+    INCLUDE STRUCTURE fti_ldb_tr_positions.
+TYPES: s_no             TYPE i,
+       deal_no          TYPE tb_rfha,
+       st_date          TYPE datum,
+       end_date         TYPE datum,
+       rportb           TYPE vtbfha-rportb,
+       ranl             TYPE vtbfha-ranl,
+       company_code     TYPE bukrs,
+       hrel_number      TYPE ztr_hrel-hrel_number,
+       testperiod_end   TYPE thxet_meas_effrt-testperiod_end,
+       testperiod_begin TYPE thxet_meas_effrt-testperiod_begin,
+       eff_test_status  TYPE thxet_meas_effrt-eff_test_status,
+       eff_ratio        TYPE thxet_meas_effrt-eff_ratio,
+       rfha             TYPE vtbfha-rfha,
+       sec_id           TYPE vvranlw,
+       oci_pos          TYPE tract_accitem-position_amt,
+       oci_curr         TYPE tract_accitem-position_curr,
+       amort_pos        TYPE tract_accitem-position_amt,
+       amort_curr       TYPE tract_accitem-position_curr,
+       pnl_pos          TYPE tract_accitem-position_amt,
+       pnl_curr         TYPE tract_accitem-position_curr,
+       oci_nom          TYPE tract_accitem-position_amt,
+       oci_nom_curr     TYPE tract_accitem-position_curr,
+       amort_nom        TYPE tract_accitem-position_amt,
+       amort_nom_curr   TYPE tract_accitem-position_curr,
+       pnl_nom          TYPE tract_accitem-position_amt,
+       pnl_nom_curr     TYPE tract_accitem-position_curr,
+       bal_pc           TYPE tract_accitem-position_amt,
+       bal_lc           TYPE tract_accitem-position_amt,
+       book_state(1),
+       due_date         TYPE datum,
+       END OF t_final.
+
+DATA: i_ident       TYPE TABLE OF t_ident,
+*      i_position TYPE trly_position_value,
+      i_final       TYPE TABLE OF t_final,
+      li_pos        TYPE TABLE OF t_positions,  "trly_position_value,
+      lw_pos        TYPE t_positions,
+      i_alv_variant TYPE disvariant.
+
+DATA: i_fieldcat TYPE slis_t_fieldcat_alv,
+      w_fieldcat TYPE slis_fieldcat_alv,
+      w_layout   TYPE slis_layout_alv,
+      v_repid    TYPE sy-repid.
+
+SELECTION-SCREEN : BEGIN OF BLOCK b1 WITH FRAME TITLE TEXT-001.
+SELECTION-SCREEN SKIP.
+SELECT-OPTIONS: s_buk FOR positions-bukrs OBLIGATORY DEFAULT 'HK01',
+*                s_val_a FOR trls_position_value-valuation_area,
+                s_prod FOR positions-gsart OBLIGATORY, "DEFAULT 'DSF',
+                s_deal FOR positions-deal_number,
+                s_date FOR positions-stichtag NO-EXTENSION NO INTERVALS OBLIGATORY DEFAULT sy-datum .
+SELECTION-SCREEN SKIP.
+SELECTION-SCREEN END OF BLOCK b1.
+SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME TITLE TEXT-030.
+PARAMETERS p_var TYPE slis_vari.
+SELECTION-SCREEN END OF BLOCK b2.
+
+" Default values for product types
+
+INITIALIZATION.
+  s_prod-sign = 'I'.
+  s_prod-option = 'EQ'.
+  s_prod-low = 'DSF'.
+  APPEND s_prod.
+
+  s_prod-sign = 'I'.
+  s_prod-option = 'EQ'.
+  s_prod-low = 'IRS'.
+  APPEND s_prod.
+  PERFORM initialization.
+
+
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_var.
+  PERFORM f4_variant.
+
+AT SELECTION-SCREEN ON  p_var.
+  PERFORM variant.
+
+*&---------------------------------------------------------------------*
+*  AT SELECTION-SCREEN OUTPUT                                          *
+*&---------------------------------------------------------------------*
+AT SELECTION-SCREEN OUTPUT.
+  PERFORM modify_sel_screen.
+
+
+AT SELECTION-SCREEN.
+  PERFORM validate_input.
+  PERFORM ldb_set_param.
+
+START-OF-SELECTION.
+
+  REFRESH li_pos.
+**************************************************************************
+  GET positions FIELDS os_guid
+          bukrs
+          land1
+          tr_acc_code
+          valuation_area
+          valuation_class
+          pos_man_proc
+          active_passive
+          gsart
+          portfolio
+          security_id
+          loans_contract
+          deal_number
+          hedge_id
+          account_group
+          security_account
+          position_account
+          external_account
+          diff_currency
+          extacc_deal
+          flag_long_short
+          lot_id
+          dlotgeneration
+          tlotgeneration
+          lotgeneration_user
+          lotgen_bustranscat
+          lotpos_init_date
+          lotpos_org_date
+          lotgen_bukrs
+          lotgen_dealnr
+          fund
+          grant_nbr
+          sanlf
+          stichtag
+          rantyp_r
+          rrefkont_r
+          acc_ass_ref
+          hkont
+          dblfz
+          delfz
+          rlztg
+          rlzmo
+          rlzja
+          uebtg
+          uebmo
+          uebja
+          partnr
+          type
+          istype
+          ind_sector
+          cntry_comp
+          legal_enty
+          legal_org
+          nation
+          state
+          group_id
+          group_d
+          staff_grp
+          comp_re
+          grade
+          grade_method
+          solvncy
+          sol_inf
+          sol_i_d
+          rating
+          sol_ins
+          sfhaart
+          finproj
+          rmaid
+          rgarant
+          nordext
+          zuond
+          refer
+          merkm
+          portfolio_tm
+          lc_number
+          applicant
+          benficiary
+          bg_number
+          man_comp_name
+          man_comp_addr
+          man_bank_name
+          man_bank_addr
+          man_bank_country
+          man_comp_country
+          rdealer
+          rdpbank
+          secacc_type
+          secacc_cat
+          sbilk
+          snoti
+          alwpkl
+          swerttyp
+          sol_ins_ranl
+          rating_ranl
+          swpklass
+          sakar
+          sfoart
+          sfoty
+          sartbet
+          sboernot
+          vvranlwx
+          rhandpl
+          aaaaktie
+          kbnewe
+          kzahlakt
+          int_cat
+          pkond
+          bkond
+          peffzins
+          seffmeth
+          commodity_id
+          ul_loan_id
+          shwhr
+          svwhr
+          sbwhr
+          anzgw
+          calc_ccy
+          wverb1
+          wford1
+          swhrkond
+          cty_uom
+          units
+          units_locked
+          cty_quantity
+          nominal_amt_pc
+          nominal_amt_lo_pc
+          nominal_amt_dc
+          nominal_amt_lo_dc
+          nominal_org_amt_pc
+          nominal_amt_out_pc
+          nominal_amt_in_pc
+          nominal_amt_out_dc
+          nominal_amt_in_dc
+          purch_pc
+          purch_lc
+          purch_vc
+          purch_dc
+          aqu_val_pc
+          aqu_val_lc
+          aqu_val_vc
+          aqu_val_dc
+          book_val_pc
+          book_val_lc
+          book_val_vc
+          book_val_dc
+          charge_pc
+          charge_lc
+          charge_vc
+          charge_dc
+          book_val_ex_pc
+          book_val_ex_lc
+          book_val_ex_vc
+          book_val_ex_dc
+          val_ti_pc
+          val_ti_lc
+          val_ti_vc
+          val_ti_dc
+          val_fx_lc
+          val_fx_vc
+          val_fx_amaqu_val_lc
+          val_fx_amaqu_val_vc
+          val_fx_aqu_val_lc
+          val_fx_aqu_val_vc
+          val_ch_ti_pc
+          val_ch_ti_lc
+          val_ch_ti_vc
+          val_ch_ti_dc
+          val_ch_fx_lc
+          val_ch_fx_vc
+          amort_pc
+          amort_lc
+          amort_vc
+          amort_dc
+          impmnt_pc
+          impmnt_lc
+          impmnt_vc
+          impmnt_dc
+          impmnt_fx_lc
+          impmnt_fx_vc
+          repayment_pc
+          repayment_lc
+          repayment_vc
+          repayment_dc
+          amaqu_val_pc
+          amaqu_val_lc
+          amaqu_val_vc
+          amaqu_val_dc
+          disagio_pc
+          disagio_lc
+          disagio_vc
+          disagio_dc
+          val_ti_npl_pc
+          val_ti_npl_lc
+          val_ti_npl_vc
+          val_ti_npl_dc
+          val_fx_npl_lc
+          val_fx_npl_vc
+          val_ch_ti_npl_pc
+          val_ch_ti_npl_lc
+          val_ch_ti_npl_vc
+          val_ch_ti_npl_dc
+          val_ch_fx_npl_lc
+          val_ch_fx_npl_vc
+          varmar_pc
+          varmar_lc
+          varmar_vc
+          varmar_dc
+          spotvalp_lc
+          spotvalp_vc
+          spotvals_lc
+          spotvals_vc
+          swapacc_pc
+          swapacc_lc
+          swapacc_vc
+          swapacc_dc
+          swapval_lc
+          swapval_vc
+          cons_gains_ti_pc
+          cons_gains_ti_lc
+          cons_gains_ti_vc
+          cons_gains_ti_dc
+          cons_losses_ti_pc
+          cons_losses_ti_lc
+          cons_losses_ti_vc
+          cons_losses_ti_dc
+          cons_gains_fx_lc
+          cons_gains_fx_vc
+          cons_losses_fx_lc
+          cons_losses_fx_vc
+          ls_al_pc
+          ls_al_vc
+          ls_al_lc
+          ls_al_dc
+          ls_al_fx_lc
+          ls_al_fx_vc
+          am_ad_ls_al_pc
+          am_ad_ls_al_vc
+          am_ad_ls_al_lc
+          am_ad_ls_al_dc
+          am_ad_ls_al_fx_lc
+          am_ad_ls_al_fx_vc
+          of_ls_al_pc
+          of_ls_al_vc
+          of_ls_al_dc
+          of_ls_al_lc
+          of_ls_al_fx_lc
+          of_ls_al_fx_vc
+          oci_of_ls_al_pc
+          oci_of_ls_al_dc
+          oci_of_ls_al_lc
+          oci_of_ls_al_vc
+          oci_offs_loss_allow_fx_lc
+          oci_offs_loss_allow_fx_vc
+          cn_cg_pc
+          cn_cg_vc
+          cn_cg_lc
+          cn_cg_dc
+          cn_cg_fx_lc
+          cn_cg_fx_vc
+          am_cost_pc
+          am_cost_vc
+          am_cost_dc
+          am_cost_lc
+          kakupr
+          kaksbw
+          ankupr
+          anksbw
+          bukupr
+          buksbw
+          kurspr
+          kursbw
+          market_pc
+          market_dc
+          market_date
+          acc_interest_pc
+          acc_interest_dc
+          acc_def_int_pc
+          acc_def_int_dc
+          acc_def_int_vc
+          acc_def_int_lc
+          npv_pc
+          npv_dc
+          npv_cc
+          npv_long_pc
+          npv_short_pc
+          npv_long_cc
+          npv_short_cc
+          clean_price_pc
+          clean_price_dc
+          clean_price_cc
+          bpvalue_pc
+          bpvalue_dc
+          bpvalue_cc
+          ytm
+          mac_duration
+          mod_duration
+          fw_duration
+          convexity
+          delta
+          gamma
+          theta
+          vega
+          s_val_ti_pc
+          s_val_ti_lc
+          s_val_ti_vc
+          s_val_ti_dc
+          s_val_fx_lc
+          s_val_fx_vc
+          s_val_fx_amaqu_val_lc
+          s_val_fx_amaqu_val_vc
+          s_val_fx_aqu_val_lc
+          s_val_fx_aqu_val_vc
+          s_val_ch_ti_pc
+          s_val_ch_ti_lc
+          s_val_ch_ti_vc
+          s_val_ch_ti_dc
+          s_val_ch_fx_lc
+          s_val_ch_fx_vc
+          s_amort_pc
+          s_amort_lc
+          s_amort_vc
+          s_amort_dc
+          s_disagio_pc
+          s_disagio_lc
+          s_disagio_vc
+          s_disagio_dc
+          s_val_ti_npl_pc
+          s_val_ti_npl_lc
+          s_val_ti_npl_vc
+          s_val_ti_npl_dc
+          s_val_fx_npl_lc
+          s_val_fx_npl_vc
+          s_val_ch_ti_npl_pc
+          s_val_ch_ti_npl_lc
+          s_val_ch_ti_npl_vc
+          s_val_ch_ti_npl_dc
+          s_val_ch_fx_npl_lc
+          s_val_ch_fx_npl_vc
+          s_spotvalp_lc
+          s_spotvalp_vc
+          s_spotvals_lc
+          s_spotvals_vc
+          s_swapacc_pc
+          s_swapacc_lc
+          s_swapacc_vc
+          s_swapacc_dc
+          s_swapval_lc
+          s_swapval_vc
+          s_valid_date
+          s_valid_rate_date
+          s_map
+          s_mav
+          s_mar_fe
+          s_spot_rate_p
+          s_spot_rate_s
+          s_swap_rate_p
+          s_swap_rate_s
+          s_ls_al_pc
+          s_ls_al_vc
+          s_ls_al_lc
+          s_ls_al_dc
+          s_ls_al_fx_lc
+          s_ls_al_fx_vc
+          s_am_ad_ls_al_pc
+          s_am_ad_ls_al_vc
+          s_am_ad_ls_al_lc
+          s_am_ad_ls_al_dc
+          s_am_ad_ls_al_fx_lc
+          s_am_ad_ls_al_fx_vc
+          s_of_ls_al_pc
+          s_of_ls_al_vc
+          s_of_ls_al_dc
+          s_of_ls_al_lc
+          s_of_ls_al_fx_lc
+          s_of_ls_al_fx_vc
+          s_oci_of_ls_al_pc
+          s_oci_of_ls_al_dc
+          s_oci_of_ls_al_lc
+          s_oci_of_ls_al_vc
+          s_oci_offs_loss_allow_fx_lc
+          s_oci_offs_loss_allow_fx_vc
+          s_cn_cg_pc
+          s_cn_cg_vc
+          s_cn_cg_lc
+          s_cn_cg_dc
+          s_cn_cg_fx_lc
+          s_cn_cg_fx_vc
+          s_am_cost_pc
+          s_am_cost_vc
+          s_am_cost_dc
+          s_am_cost_lc
+          zero_position
+          12m_pd
+          lifetime_pd
+          lgd
+          12m_pd_org_aqu_dat
+          lifetime_pd_org_aqu_dat
+          lgd_org_aqu_dat
+          classifier_01
+          classifier_02
+          classifier_03
+          classifier_04.
+
+  MOVE-CORRESPONDING positions TO lw_pos.
+  APPEND lw_pos TO li_pos.
+
+END-OF-SELECTION.
+************************************************************************
+
+IF li_pos is not INITIAL.
+
+  PERFORM fetch_data.
+  PERFORM field_catalog.
+  PERFORM display.
+
+ENDIF.
+
+*&---------------------------------------------------------------------*
+*&      Form  VALIDATE_INPUT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM validate_input .
+
+  SELECT DISTINCT  valuation_area   "os_guid
+                  company_code
+                  product_type
+                  security_id
+                  deal_number  FROM dift_pos_ident INTO TABLE i_ident
+                               WHERE company_code IN s_buk
+                               AND  deal_number IN s_deal
+                                AND  product_type IN s_prod
+  AND valuation_area = '001'.
+
+  IF i_ident IS INITIAL.
+    MESSAGE TEXT-002 TYPE 'E'.
+  ENDIF.
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*&      Form  FETCH_DATA
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM fetch_data .
+
+  DATA: lv_sno    TYPE i,
+        li_hrel   TYPE TABLE OF t_hrel,
+        li_vtbfha TYPE TABLE OF t_vtbfha,
+        lw_hrel   TYPE t_hrel,
+        lw_final  TYPE t_final,
+        li_line   TYPE TABLE OF tline,
+        lv_name   TYPE thead-tdname.
+
+  IF li_pos IS NOT INITIAL.
+
+    SELECT company_code
+           hrel_number
+           hinst_deal_no FROM ztr_hrel INTO TABLE li_hrel
+                         FOR ALL ENTRIES IN li_pos
+                         WHERE company_code   = li_pos-bukrs
+                         AND   hinst_deal_no  = li_pos-deal_number.
+
+    IF li_hrel IS NOT INITIAL.
+
+      LOOP AT li_hrel INTO lw_hrel.
+        lw_hrel-assgn_no = '$OCI$' && lw_hrel-hinst_deal_no .
+        MODIFY li_hrel FROM lw_hrel TRANSPORTING assgn_no .
+        CLEAR: lw_hrel.
+      ENDLOOP.
+
+
+      SELECT company_code,
+             hrel_number,
+             test_date,
+             description,
+             pet_result,
+             pet_ratio,
+             ret_result,
+             ret_ratio FROM ztr_et_result INTO TABLE @DATA(li_result)
+                       FOR ALL ENTRIES IN @li_hrel
+                       WHERE company_code = @li_hrel-company_code
+                       AND   hrel_number  = @li_hrel-hrel_number
+                       AND   test_date    LE @s_date-low.
+
+      SORT li_result DESCENDING BY company_code hrel_number test_date. " gjahr
+      DELETE ADJACENT DUPLICATES FROM li_result COMPARING company_code hrel_number. " gjahr.
+
+      SELECT allocnr,
+              document_guid,
+              item_number,
+              dis_flowtype,
+              position_amt,
+              position_curr,
+              local_amt,
+              local_curr,
+              gl_account,
+              payment_date,
+              reversal_belnr FROM tract_accitem INTO TABLE @DATA(li_item)
+                     WHERE dis_flowtype IN ('ZVHEDOC+','ZVHEDOC-','ZVHEDPL+'
+       ,'ZVHEDPL-','ZVHEDAD+','ZVHEDAD-') %_HINTS ORACLE 'INDEX("TRACT_ACCITEM" "TRACT_ACCITEM~ZHA")'.
+
+      DELETE li_item WHERE gl_account NE '4660001000'.
+      DELETE li_item WHERE reversal_belnr NE ' '.
+      DELETE li_item WHERE payment_date GT s_date-low.
+
+      LOOP AT li_item INTO DATA(lw_item).
+        READ TABLE li_hrel INTO lw_hrel WITH KEY assgn_no = lw_item-allocnr.
+        IF sy-subrc NE 0.
+          DELETE li_item.
+          CONTINUE.
+        ENDIF.
+        CLEAR: lw_item.
+      ENDLOOP.
+      if li_item is NOT INITIAL.
+      SELECT os_guid FROM tract_document INTO TABLE @DATA(li_doc)
+                     FOR ALL ENTRIES IN @li_item
+                     WHERE os_guid = @li_item-document_guid
+                     AND valuation_area = '001'.
+
+      SORT li_item ASCENDING BY allocnr document_guid.
+      endif.
+    ENDIF.
+
+    SELECT bukrs
+           rfha
+           rportb
+           rldepo
+           ranl
+           dblfz
+           delfz
+           vrfha FROM vtbfha INTO CORRESPONDING FIELDS OF TABLE li_vtbfha
+                FOR ALL ENTRIES IN li_pos
+                WHERE bukrs = li_pos-bukrs
+                 AND  delfz = li_pos-delfz
+                 AND  rantyp = '2'
+                 AND  sfhaart = '100'
+                 AND  sgsart = 'BNF'.
+
+    LOOP AT li_vtbfha ASSIGNING FIELD-SYMBOL(<fs_vtbfha>).
+
+      IF <fs_vtbfha>-vrfha IS NOT INITIAL.
+        MOVE <fs_vtbfha>-vrfha TO <fs_vtbfha>-refer.
+      ELSE.
+        CLEAR:lv_name.
+        lv_name = <fs_vtbfha>-bukrs && <fs_vtbfha>-rfha.
+
+        CALL FUNCTION 'READ_TEXT'
+          EXPORTING
+            client                  = sy-mandt
+            id                      = '0006'
+            language                = sy-langu
+            name                    = lv_name
+            object                  = 'TB_FHA'
+          TABLES
+            lines                   = li_line
+          EXCEPTIONS
+            id                      = 1
+            language                = 2
+            name                    = 3
+            not_found               = 4
+            object                  = 5
+            reference_check         = 6
+            wrong_access_to_archive = 7
+            OTHERS                  = 8.
+        IF sy-subrc = 0.
+
+          READ TABLE li_line INTO DATA(lw_line) INDEX 1.
+          IF sy-subrc = 0.
+            CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+              EXPORTING
+                input  = lw_line-tdline
+              IMPORTING
+                output = <fs_vtbfha>-refer.
+          ENDIF.
+        ENDIF.
+      ENDIF.
+
+      READ TABLE li_pos INTO lw_pos WITH KEY deal_number = <fs_vtbfha>-refer.
+      IF sy-subrc NE 0.
+        DELETE li_vtbfha.
+        CONTINUE.
+      ENDIF.
+
+    ENDLOOP.
+
+    SELECT bukrs,
+         rfha,
+         dblfz,
+         delfz FROM vtbfha INTO TABLE @DATA(li_vtbfa1)
+              FOR ALL ENTRIES IN @li_pos
+              WHERE bukrs =  @li_pos-bukrs
+    AND   rfha = @li_pos-deal_number.
+
+  ENDIF.
+
+  LOOP AT li_pos INTO lw_pos.
+    MOVE-CORRESPONDING lw_pos TO lw_final.
+    lv_sno = lv_sno + 1.
+    lw_final-s_no = lv_sno.
+*    lw_final-deal_no = lw_pos-deal_number.
+    CALL FUNCTION 'CONVERSION_EXIT_ALPHA_OUTPUT'
+      EXPORTING
+        input         = lw_pos-deal_number
+     IMPORTING
+       OUTPUT        = lw_final-deal_no .
+
+    lw_final-sec_id = lw_pos-security_id.
+
+    READ TABLE li_hrel INTO lw_hrel WITH KEY hinst_deal_no = lw_pos-deal_number
+                                             company_code = lw_pos-bukrs.
+    IF sy-subrc = 0.
+      lw_final-hrel_number = lw_hrel-hrel_number.
+      CALL FUNCTION 'CONVERSION_EXIT_ALPHA_OUTPUT'
+      EXPORTING
+        input         = lw_hrel-hrel_number
+     IMPORTING
+       OUTPUT        = lw_final-hrel_number .
+    ENDIF.
+
+    READ TABLE li_result INTO DATA(lw_result) WITH KEY company_code = lw_hrel-company_code
+                                                       hrel_number  = lw_hrel-hrel_number.
+    IF sy-subrc = 0.
+      lw_final-due_date         = lw_result-test_date.
+      lw_final-eff_ratio        = lw_result-ret_ratio .
+      lw_final-eff_test_status  = lw_result-ret_result .
+    ENDIF.
+
+    READ TABLE li_vtbfha INTO DATA(lw_vtbfha) WITH KEY bukrs =  lw_pos-bukrs
+                                                       refer = lw_pos-deal_number.
+    IF sy-subrc = 0.
+      lw_final-rfha = lw_vtbfha-rfha.
+      lw_final-ranl = lw_vtbfha-rldepo.
+      lw_final-rportb = lw_vtbfha-rportb.
+      lw_final-sec_id = lw_vtbfha-ranl.
+    ENDIF.
+
+    READ TABLE li_vtbfa1 INTO DATA(lw_vtbfa1) WITH KEY bukrs =  lw_pos-bukrs
+                                                       rfha =  lw_pos-deal_number.
+    IF sy-subrc = 0.
+      lw_final-st_date = lw_vtbfa1-dblfz.
+      IF lw_pos-gsart = 'IRS'.
+        lw_final-end_date = lw_pos-delfz.
+      ELSE.
+        lw_final-end_date = lw_vtbfa1-delfz.
+      ENDIF.
+    ENDIF.
+
+    lw_final-book_state = 'F'.
+
+*    READ TABLE li_item INTO DATA(lw_item1) WITH KEY allocnr = lw_hrel-assgn_no.
+*    IF sy-subrc = 0.
+
+    LOOP AT li_item INTO lw_item WHERE allocnr = lw_hrel-assgn_no.
+      READ TABLE li_doc INTO DATA(lw_doc) WITH KEY os_guid = lw_item-document_guid.
+      IF sy-subrc = 0.
+        CASE lw_item-dis_flowtype.
+          WHEN 'ZVHEDOC+'.
+            lw_final-oci_pos = lw_final-oci_pos + lw_item-position_amt.
+            lw_final-oci_nom = lw_final-oci_nom + lw_item-local_amt.
+            lw_final-oci_curr = lw_item-position_curr.
+            lw_final-oci_nom_curr = lw_item-local_curr.
+          WHEN 'ZVHEDOC-'.
+            IF lw_item-position_amt LT 0.
+              lw_final-oci_pos = lw_final-oci_pos + lw_item-position_amt.
+              lw_final-oci_nom = lw_final-oci_nom + lw_item-local_amt.
+            ELSE.
+              lw_final-oci_pos = lw_final-oci_pos - lw_item-position_amt.
+              lw_final-oci_nom = lw_final-oci_nom - lw_item-local_amt.
+            ENDIF.
+            lw_final-oci_curr = lw_item-position_curr.
+            lw_final-oci_nom_curr = lw_item-local_curr.
+          WHEN 'ZVHEDAD+'.
+            lw_final-amort_curr = lw_item-position_curr.
+            lw_final-amort_nom_curr = lw_item-local_curr.
+            lw_final-amort_pos = lw_final-amort_pos + lw_item-position_amt.
+            lw_final-amort_nom = lw_final-amort_nom + lw_item-local_amt.
+          WHEN 'ZVHEDAD-'.
+            IF lw_item-position_amt LT 0.
+              lw_final-amort_pos = lw_final-amort_pos + lw_item-position_amt.
+              lw_final-amort_nom = lw_final-amort_nom + lw_item-local_amt.
+            ELSE.
+              lw_final-amort_pos = lw_final-amort_pos - lw_item-position_amt.
+              lw_final-amort_nom = lw_final-amort_nom - lw_item-local_amt.
+            ENDIF.
+            lw_final-amort_nom_curr = lw_item-local_curr.
+            lw_final-amort_curr = lw_item-position_curr.
+          WHEN 'ZVHEDPL+'.
+            lw_final-pnl_pos = lw_final-pnl_pos + lw_item-position_amt.
+            lw_final-pnl_nom = lw_final-pnl_nom + lw_item-local_amt.
+            lw_final-pnl_curr = lw_item-position_curr.
+            lw_final-pnl_nom_curr = lw_item-local_curr.
+          WHEN 'ZVHEDPL-'.
+            IF lw_item-position_amt LT 0.
+              lw_final-pnl_pos = lw_final-pnl_pos + lw_item-position_amt.
+              lw_final-pnl_nom = lw_final-pnl_nom + lw_item-local_amt.
+            ELSE.
+              lw_final-pnl_pos = lw_final-pnl_pos - lw_item-position_amt.
+              lw_final-pnl_nom = lw_final-pnl_nom - lw_item-local_amt.
+            ENDIF.
+            lw_final-pnl_curr = lw_item-position_curr.
+            lw_final-pnl_nom_curr = lw_item-local_curr.
+          WHEN OTHERS.
+        ENDCASE.
+      ELSE.
+        CONTINUE.
+      ENDIF.
+    ENDLOOP.
+
+    lw_final-bal_pc =  lw_final-oci_pos + lw_final-amort_pos + lw_final-pnl_pos.
+    lw_final-bal_lc = lw_final-oci_nom + lw_final-amort_nom + lw_final-pnl_nom.
+
+
+    APPEND lw_final TO i_final.
+    CLEAR: lw_final,lw_item,lw_pos,lw_hrel,lw_vtbfha.
+
+  ENDLOOP.
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*&      Form  FIRLD_CATALOG
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM field_catalog .
+
+*  w_layout-colwidth_optimize = 'X'.
+  w_layout-expand_all = 'X'.
+  w_layout-ZEBRA = 'X'.
+
+  w_fieldcat-fieldname = 'S_NO'.
+  w_fieldcat-seltext_m = TEXT-003.
+  w_fieldcat-tabname = 'I_FINAL'.
+  APPEND w_fieldcat TO i_fieldcat.
+  CLEAR  w_fieldcat.
+
+  w_fieldcat-fieldname = 'DEAL_NO'.
+  w_fieldcat-seltext_m = TEXT-004.
+  w_fieldcat-tabname = 'I_FINAL'.
+  w_fieldcat-outputlen = '15'.
+  APPEND w_fieldcat TO i_fieldcat.
+  CLEAR  w_fieldcat.
+
+  w_fieldcat-fieldname = 'ST_DATE'.
+  w_fieldcat-seltext_m = TEXT-005.
+  w_fieldcat-tabname = 'I_FINAL'.
+  APPEND w_fieldcat TO i_fieldcat.
+  CLEAR  w_fieldcat.
+
+  w_fieldcat-fieldname = 'END_DATE'.
+  w_fieldcat-seltext_m = TEXT-006.
+  w_fieldcat-tabname = 'I_FINAL'.
+  APPEND w_fieldcat TO i_fieldcat.
+  CLEAR  w_fieldcat.
+
+  w_fieldcat-fieldname = 'HREL_NUMBER'.
+  w_fieldcat-seltext_m = TEXT-007.
+  w_fieldcat-tabname = 'I_FINAL'.
+*  w_fieldcat-convexit = 'ALPHA'.
+  APPEND w_fieldcat TO i_fieldcat.
+  CLEAR  w_fieldcat.
+*
+*  w_fieldcat-fieldname = 'TESTPERIOD_END'.
+*  w_fieldcat-seltext_m = TEXT-009.
+*  w_fieldcat-tabname = 'I_FINAL'.
+*  APPEND w_fieldcat TO i_fieldcat.
+*  CLEAR  w_fieldcat.
+
+  w_fieldcat-fieldname = 'EFF_TEST_STATUS'.
+  w_fieldcat-seltext_m = TEXT-010.
+  w_fieldcat-tabname = 'I_FINAL'.
+  APPEND w_fieldcat TO i_fieldcat.
+  CLEAR  w_fieldcat.
+
+  w_fieldcat-fieldname = 'EFF_RATIO'.
+  w_fieldcat-seltext_m = TEXT-011.
+  w_fieldcat-tabname = 'I_FINAL'.
+  APPEND w_fieldcat TO i_fieldcat.
+  CLEAR  w_fieldcat.
+
+  w_fieldcat-fieldname = 'RFHA'.
+  w_fieldcat-seltext_m = TEXT-012.
+  w_fieldcat-tabname = 'I_FINAL'.
+*  w_fieldcat-convexit = 'ALPHA'.
+  APPEND w_fieldcat TO i_fieldcat.
+  CLEAR  w_fieldcat.
+
+  w_fieldcat-fieldname = 'SEC_ID'.
+  w_fieldcat-seltext_m = TEXT-013.
+  w_fieldcat-tabname = 'I_FINAL'.
+  APPEND w_fieldcat TO i_fieldcat.
+  CLEAR  w_fieldcat.
+
+  w_fieldcat-fieldname = 'RANL'.
+  w_fieldcat-seltext_m = TEXT-031.
+  w_fieldcat-tabname = 'I_FINAL'.
+  APPEND w_fieldcat TO i_fieldcat.
+  CLEAR  w_fieldcat.
+
+*  w_fieldcat-fieldname = 'RPORTB'.
+*  w_fieldcat-seltext_m = TEXT-032.
+*  w_fieldcat-tabname = 'I_FINAL'.
+*  APPEND w_fieldcat TO i_fieldcat.
+*  CLEAR  w_fieldcat.
+
+  w_fieldcat-fieldname = 'OCI_POS'.
+  w_fieldcat-seltext_m = TEXT-014.
+  w_fieldcat-tabname = 'I_FINAL'.
+  APPEND w_fieldcat TO i_fieldcat.
+  CLEAR  w_fieldcat.
+
+  w_fieldcat-fieldname = 'OCI_CURR'.
+  w_fieldcat-seltext_m = TEXT-015.
+  w_fieldcat-tabname = 'I_FINAL'.
+  APPEND w_fieldcat TO i_fieldcat.
+  CLEAR  w_fieldcat.
+
+  w_fieldcat-fieldname = 'AMORT_POS'.
+  w_fieldcat-seltext_m = TEXT-016.
+  w_fieldcat-tabname = 'I_FINAL'.
+  APPEND w_fieldcat TO i_fieldcat.
+  CLEAR  w_fieldcat.
+
+  w_fieldcat-fieldname = 'AMORT_CURR'.
+  w_fieldcat-seltext_m = TEXT-017.
+  w_fieldcat-tabname = 'I_FINAL'.
+  APPEND w_fieldcat TO i_fieldcat.
+  CLEAR  w_fieldcat.
+
+  w_fieldcat-fieldname = 'PNL_POS'.
+  w_fieldcat-seltext_m = TEXT-018.
+  w_fieldcat-tabname = 'I_FINAL'.
+  APPEND w_fieldcat TO i_fieldcat.
+  CLEAR  w_fieldcat.
+
+  w_fieldcat-fieldname = 'PNL_CURR'.
+  w_fieldcat-seltext_m = TEXT-019.
+  w_fieldcat-tabname = 'I_FINAL'.
+  APPEND w_fieldcat TO i_fieldcat.
+  CLEAR  w_fieldcat.
+
+  w_fieldcat-fieldname = 'OCI_NOM'.
+  w_fieldcat-seltext_m = TEXT-020.
+  w_fieldcat-tabname = 'I_FINAL'.
+  APPEND w_fieldcat TO i_fieldcat.
+  CLEAR  w_fieldcat.
+
+  w_fieldcat-fieldname = 'OCI_NOM_CURR'.
+  w_fieldcat-seltext_m = TEXT-021.
+  w_fieldcat-tabname = 'I_FINAL'.
+  APPEND w_fieldcat TO i_fieldcat.
+  CLEAR  w_fieldcat.
+
+  w_fieldcat-fieldname = 'AMORT_NOM'.
+  w_fieldcat-seltext_m = TEXT-022.
+  w_fieldcat-tabname = 'I_FINAL'.
+  APPEND w_fieldcat TO i_fieldcat.
+  CLEAR  w_fieldcat.
+
+  w_fieldcat-fieldname = 'AMORT_NOM_CURR'.
+  w_fieldcat-seltext_m = TEXT-023.
+  w_fieldcat-tabname = 'I_FINAL'.
+  APPEND w_fieldcat TO i_fieldcat.
+  CLEAR  w_fieldcat.
+
+  w_fieldcat-fieldname = 'PNL_NOM'.
+  w_fieldcat-seltext_m = TEXT-024.
+  w_fieldcat-tabname = 'I_FINAL'.
+  APPEND w_fieldcat TO i_fieldcat.
+  CLEAR  w_fieldcat.
+
+  w_fieldcat-fieldname = 'PNL_NOM_CURR'.
+  w_fieldcat-seltext_m = TEXT-025.
+  w_fieldcat-tabname = 'I_FINAL'.
+  APPEND w_fieldcat TO i_fieldcat.
+  CLEAR  w_fieldcat.
+
+  w_fieldcat-fieldname = 'BAL_PC'.
+  w_fieldcat-seltext_m = TEXT-028.
+  w_fieldcat-tabname = 'I_FINAL'.
+  APPEND w_fieldcat TO i_fieldcat.
+  CLEAR  w_fieldcat.
+
+  w_fieldcat-fieldname = 'BAL_LC'.
+  w_fieldcat-seltext_m = TEXT-029.
+  w_fieldcat-tabname = 'I_FINAL'.
+  APPEND w_fieldcat TO i_fieldcat.
+  CLEAR  w_fieldcat.
+
+  w_fieldcat-fieldname = 'BOOK_STATE'.
+  w_fieldcat-seltext_m = TEXT-026.
+  w_fieldcat-tabname = 'I_FINAL'.
+  APPEND w_fieldcat TO i_fieldcat.
+  CLEAR  w_fieldcat.
+
+  w_fieldcat-fieldname = 'DUE_DATE'.
+  w_fieldcat-seltext_m = TEXT-027.
+  w_fieldcat-tabname = 'I_FINAL'.
+  APPEND w_fieldcat TO i_fieldcat.
+  CLEAR  w_fieldcat.
+
+  CALL FUNCTION 'REUSE_ALV_FIELDCATALOG_MERGE'
+    EXPORTING
+      i_program_name         = sy-repid
+      i_internal_tabname     = 'I_FINAL'
+      i_structure_name       = 'FTI_LDB_TR_POSITIONS'
+*     I_CLIENT_NEVER_DISPLAY = 'X'
+*     I_INCLNAME             =
+*     I_BYPASSING_BUFFER     =
+*     I_BUFFER_ACTIVE        =
+    CHANGING
+      ct_fieldcat            = i_fieldcat
+    EXCEPTIONS
+      inconsistent_interface = 1
+      program_error          = 2
+      OTHERS                 = 3.
+  IF sy-subrc <> 0.
+* Implement suitable error handling here
+  ENDIF.
+
+
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*&      Form  DISPLAY
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM display .
+
+  CALL FUNCTION 'REUSE_ALV_GRID_DISPLAY'
+    EXPORTING
+      i_callback_program = sy-repid
+      it_fieldcat        = i_fieldcat
+*     I_DEFAULT          = 'X'
+      i_save             = 'X'
+      is_variant         = i_alv_variant
+      is_layout           = w_layout
+    TABLES
+      t_outtab           = i_final
+    EXCEPTIONS
+      program_error      = 1
+      OTHERS             = 2.
+  IF sy-subrc <> 0.
+* Implement suitable error handling here
+  ENDIF.
+
+  IF sy-subrc = 1.
+  ELSEIF sy-subrc = 2.
+  ENDIF.
+
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*&      Form  LDB_PARAMETERS
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM ldb_set_param .
+
+  DATA: li_ldb TYPE STANDARD TABLE OF string.
+  RANGES: s_val FOR positions-valuation_area.
+  CLEAR: s_val.
+  REFRESH: S_BUKRS,S_RFHA,S_GSART,S_DATS,s_vlarea.
+
+  s_val-sign = 'I'.
+  s_val-option = 'EQ'.
+  s_val-low = '001'.
+  APPEND s_val.
+
+  PERFORM ldb_parameters TABLES li_ldb li_ldb USING 'P' space p_sec.    "Securities
+  PERFORM ldb_parameters TABLES li_ldb li_ldb USING 'P' 'X' p_dea.    "OTC Transactions
+  PERFORM ldb_parameters TABLES li_ldb li_ldb USING 'P' space p_loa.  "Loans
+  PERFORM ldb_parameters TABLES li_ldb li_ldb USING 'P' space p_pos.  "Listed Derivatives
+  PERFORM ldb_parameters TABLES s_buk s_bukrs USING 'S' space space.  " company code
+  PERFORM ldb_parameters TABLES s_prod s_gsart USING 'S' space space.  " product type
+  PERFORM ldb_parameters TABLES s_vAL s_vlarea USING 'S' space space.  " Valuation area
+  PERFORM ldb_parameters TABLES s_date s_dats USING 'S' space space.    " key date
+  PERFORM ldb_parameters TABLES s_deal s_rfha USING 'S' space space.    " transactions
+
+  PERFORM ldb_parameters TABLES li_ldb li_ldb USING 'P' 'RM01'  p_auswt.  "Evaluation Type
+  PERFORM ldb_parameters TABLES li_ldb li_ldb USING 'P' '0'   p_shift.  "Market data shift rule
+  PERFORM ldb_parameters TABLES li_ldb li_ldb USING 'P' '05'  p_kursa.  "Price Type for evaluation: 05 Closing
+  PERFORM ldb_parameters TABLES li_ldb li_ldb USING 'P' '3'   p_bilstb. "Remaining Term Based On: 3 Key Date
+  PERFORM ldb_parameters TABLES li_ldb li_ldb USING 'P' 'USD' p_calccy. "Evaluation Currency
+  PERFORM ldb_parameters TABLES li_ldb li_ldb USING 'P' 'USD' p_anzgw. "Display Currency
+  PERFORM ldb_parameters TABLES li_ldb li_ldb USING 'P' '001' p_numbr. "With Currency Translation Type
+  PERFORM ldb_parameters TABLES li_ldb li_ldb USING 'P' '01'  p_ranlwi. "No. Secondary Index for Sec.ID
+  PERFORM ldb_parameters TABLES li_ldb li_ldb USING 'P' 'DEF'  p_grdmth . "Valuation Procedure
+
+
+  PERFORM ldb_parameters TABLES li_ldb li_ldb USING 'P' abap_false p_revflw. "Process Reversed Flows
+  PERFORM ldb_parameters TABLES li_ldb li_ldb USING 'P' abap_false p_histkr. "Historical Account Assign.Ref.
+  PERFORM ldb_parameters TABLES li_ldb li_ldb USING 'P' abap_false p_errlog. "Error Log Display
+  PERFORM ldb_parameters TABLES li_ldb li_ldb USING 'P' abap_false p_logsav. "Save Error Log
+  PERFORM ldb_parameters TABLES li_ldb li_ldb USING 'P' abap_false p_cdense. "Summarize Results
+  PERFORM ldb_parameters TABLES li_ldb li_ldb USING 'P' abap_false p_nonull.  "Hide Zero Records
+
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*  FORM ldb_parameters                                                 *
+*&---------------------------------------------------------------------*
+FORM ldb_parameters TABLES pi_sin pi_sout USING pi_type pi_pin pi_pout.
+  IF pi_type EQ 'S'.
+    IF pi_sin IS NOT INITIAL.
+      CLEAR pi_sout.
+      REFRESH pi_sout.
+      APPEND LINES OF pi_sin TO pi_sout.
+    ENDIF.
+  ELSEIF pi_type EQ 'P'.
+    CLEAR pi_pout.
+    pi_pout = pi_pin.
+  ENDIF.
+ENDFORM.
+*&---------------------------------------------------------------------*
+*&      Form  INITIALIZATION
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM initialization .
+
+  p_sec = abap_false.
+  p_pos = abap_false.
+  p_loa = abap_false.
+  p_dea = abap_true.
+
+  p_auswt = 'RM01'. "Evaluation Type
+  p_shift = '0'.  "Market data shift rule
+  p_kursa = '05'. "Price Type for evaluation: 05 closing
+  p_bilstb = '3'. "Remaining Term Based On: 3 Key Date
+  p_calccy = 'USD' . "Evaluation Currency
+  p_anzgw  = 'USD' . "Display Currencyp_revflw = abap_false.
+  p_numbr  = '001' . "With Currency Translation Typep_histkr = abap_false.
+  p_ranlwi = '01'. "No. Secondary Index for Sec.ID
+  p_grdmth = 'DEF'. "Valuation Procedure
+  p_errlog = abap_false.
+  p_logsav = abap_false.
+  p_cdense = abap_false.
+  p_nonull = abap_false.
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*  FORM_CLEAR_ALV_VARIANT                                              *
+*&---------------------------------------------------------------------*
+*FORM clear_alv_variant.
+*  CLEAR i_alv_variant.
+*  i_alv_variant-report = 'ZTRR0100'.
+*ENDFORM.
+*&---------------------------------------------------------------------*
+*  FORM MODIFY_SEL_SCREEN                                              *
+*&---------------------------------------------------------------------*
+FORM modify_sel_screen.
+  LOOP AT SCREEN.
+    IF screen-group2 = 'DBS'.     "hide ldb parameters
+      screen-active = '0'.
+      MODIFY SCREEN.
+    ENDIF.
+  ENDLOOP.
+ENDFORM.
+*&---------------------------------------------------------------------*
+*&      Form  F4_VARIANT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM f4_variant .
+
+  DATA: lv_exit TYPE c.
+
+  i_alv_variant-report = 'ZTRR0100'.
+  i_alv_variant-username = sy-uname.
+
+  CALL FUNCTION 'REUSE_ALV_VARIANT_F4'
+    EXPORTING
+      is_variant = i_alv_variant
+      i_save     = 'A'
+    IMPORTING
+      e_exit     = lv_exit
+      es_variant = i_alv_variant
+    EXCEPTIONS
+      not_found  = 1.
+  IF sy-subrc = 1.
+*    PERFORM clear_alv_variant.
+    MESSAGE ID sy-msgid TYPE 'S' NUMBER sy-msgno
+            WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+  ENDIF.
+  IF lv_exit EQ space.
+*    PERFORM clear_alv_variant.
+*  ELSE.
+    p_var = i_alv_variant-variant.
+  ENDIF.
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*&      Form  VARIANT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM variant .
+
+  IF p_var IS NOT INITIAL.
+*    PERFORM clear_alv_variant.
+*  ELSE.
+    i_alv_variant-report = 'ZTRR0100'.
+    i_alv_variant-username = sy-uname.
+    i_alv_variant-variant = p_var.
+    CALL FUNCTION 'REUSE_ALV_VARIANT_EXISTENCE'
+      EXPORTING
+        i_save        = 'A'
+      CHANGING
+        cs_variant    = i_alv_variant
+      EXCEPTIONS
+        wrong_input   = 1
+        not_found     = 2
+        program_error = 3.
+    IF sy-subrc <> 0.
+*      PERFORM clear_alv_variant.
+    ENDIF.
+  ENDIF.
+
+
+
+ENDFORM.

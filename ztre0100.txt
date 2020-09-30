@@ -1,0 +1,1954 @@
+*&---------------------------------------------------------------------*
+*& Report ZTRE0100
+*&---------------------------------------------------------------------*
+*&
+*&---------------------------------------------------------------------*
+*=======================================================================
+* Program          :  ZTRE0100
+* Created by       :  Ravi Teja Katragadda
+* Search on        :
+* Date             :  25 May 2019
+* Business Analyst :  Pankaj Jain
+* Project          :  Hedge Accounting Automation
+* PIR/PCR          :  PCR 9000020083
+* Description      :  To adjust the RC Amount from FAM to FI
+*=======================================================================
+*&---------------------------------------------------------------------*
+*                         MODIFICATION HISTORY
+*&---------------------------------------------------------------------*
+* Changed by       :
+* Search on        :
+* Date             :
+* Business Analyst :
+* Project          :
+* PIR/PCR          :
+* Description      :
+*&---------------------------------------------------------------------*
+REPORT ztre0100.
+
+TABLES: dift_pos_ident, t001.
+TYPE-POOLS: truxs,icon.
+
+TYPES: BEGIN OF t_pos_ident,
+         valuation_area TYPE dift_pos_ident-valuation_area,
+         company_code   TYPE dift_pos_ident-company_code,
+         security_id    TYPE dift_pos_ident-security_id,
+       END OF t_pos_ident,
+
+       BEGIN OF t_vtbfha,
+         bukrs     TYPE vtbfha-bukrs,
+         rfha      TYPE vtbfha-rfha,
+         ranl      TYPE vtbfha-ranl,
+         rportb    TYPE vtbfha-rportb,
+         rcomvalcl TYPE vtbfha-rcomvalcl,
+         refer(13),"    TYPE vtbfha-refer     ,
+         vrfha     TYPE vtbfha-vrfha,
+       END OF t_vtbfha,
+
+       BEGIN OF t_final,
+         company_code   TYPE dift_pos_ident-company_code,
+         valuation_area TYPE dift_pos_ident-valuation_area,
+         security_id    TYPE dift_pos_ident-security_id,
+         key_date       TYPE datum,
+         hrel           TYPE tpm_hrel_number,
+         hinst_no       TYPE ztr_hrel-hinst_deal_no,
+         lot_id         TYPE dift_pos_ident-lot_id,
+         oci_amt        TYPE tpm_nominal_amt,
+         amort_amt      TYPE tpm_nominal_amt,
+         pnl_amt        TYPE tpm_nominal_amt,
+         ori_amt        TYPE tpm_nominal_amt,
+         nom_amt        TYPE tpm_nominal_amt,
+         lot_date       TYPE datum,
+         bond_date      TYPE datum,
+         eff_ratio      TYPE tpm_eff_ratio,
+         message(90),
+         mess_amrt(1),
+       END OF t_final.
+
+TYPES:  BEGIN OF t_pos.
+    INCLUDE TYPE trls_position_value.
+TYPES: flag(1),
+       END OF t_pos.
+
+DATA : i_pos_ident TYPE TABLE OF t_pos_ident,
+       w_final     TYPE t_final,
+       w_amort     TYPE ztr_amort,
+       i_final     TYPE TABLE OF t_final,
+       i_bdcdata   TYPE bdcdata OCCURS 0 WITH HEADER LINE.
+
+DATA: i_fieldcat TYPE slis_t_fieldcat_alv,
+      w_fieldcat TYPE slis_fieldcat_alv,
+      w_layout   TYPE slis_layout_alv,
+      v_repid    TYPE sy-repid,
+      p_bukrs    TYPE bukrs.
+
+DATA : lo_protocol TYPE REF TO cl_protocol_handler_trp.
+
+CONSTANTS: c_chk      VALUE 'X',
+           v_val_a(3) VALUE '001'.
+
+SELECTION-SCREEN: BEGIN OF BLOCK b1 WITH FRAME TITLE TEXT-001.
+*PARAMETERS : p_bukrs  TYPE bukrs NO-DISPLAY DEFAULT 'HK01'.
+SELECT-OPTIONS:
+             s_bukrs  FOR t001-bukrs OBLIGATORY,
+             s_sec_id FOR dift_pos_ident-security_id.
+PARAMETERS: p_date  TYPE stichtag  OBLIGATORY DEFAULT sy-datum,
+            p_budat TYPE tpm_fi_posting_date OBLIGATORY DEFAULT sy-datum.
+PARAMETERS: p_test AS CHECKBOX DEFAULT 'X'.
+SELECTION-SCREEN SKIP.
+SELECTION-SCREEN: END OF BLOCK b1.
+
+INITIALIZATION.
+  s_bukrs-sign    = 'I'.
+  s_bukrs-option  = 'EQ'.
+  s_bukrs-low     = 'HK01'.
+  APPEND s_bukrs.
+
+AT SELECTION-SCREEN.
+  PERFORM f_validate.
+
+START-OF-SELECTION.
+  PERFORM f_data_process.
+  PERFORM f_fieldcatalog.
+  PERFORM f_display.
+
+*&---------------------------------------------------------------------*
+*&      Form  F_VALIDATE
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM f_validate .
+
+  SELECT DISTINCT  valuation_area
+                   company_code
+                   security_id FROM dift_pos_ident INTO TABLE i_pos_ident
+                         WHERE company_code IN s_bukrs
+                         AND  security_id IN s_sec_id
+                         AND  valuation_area = v_val_a
+                         AND  context = 'TRL'.
+
+  IF i_pos_ident IS INITIAL.
+    MESSAGE TEXT-002 TYPE 'E'.
+  ENDIF.
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*&      Form  F_DATA_PROCESS
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM f_data_process .
+
+  DATA:li_vtbfha            TYPE TABLE OF t_vtbfha,
+       lw_security_details  TYPE security_complex,
+       lv_flag(1),
+       lv_flag1(1),
+       lv_flag2(1),
+       lv_posting_amt_amort TYPE tpm_nominal_amt,
+       lv_posting_amt_pnl   TYPE tpm_nominal_amt,
+       lv_past_amortization TYPE tpm_nominal_amt,
+       lv_start_date        TYPE sy-datum,
+       lv_start_date_calc   TYPE sy-datum,
+       lv_end_date          TYPE sy-datum,
+       lv_me_date           TYPE sy-datum,
+       lv_days_numerator    TYPE n LENGTH 5,
+       lv_days_denominator  TYPE n LENGTH 5,
+       lv_num_of_days       TYPE n LENGTH 5.
+
+  FIELD-SYMBOLS  <lw_vtbfha>           TYPE t_vtbfha.
+
+  RANGES: s_in_date FOR trls_position_value-lotposition_init_date.
+
+  DATA: li_msg              TYPE TABLE OF bdcmsgcoll,
+        ls_msg              TYPE bdcmsgcoll,
+        li_position         TYPE trly_position_value,
+        li_position_swp_org TYPE trly_position_value,
+        lw_position_swp_org TYPE trls_position_value,
+        li_pos              TYPE TABLE OF t_pos, "trly_position_value,
+        li_pos_tab          TYPE TABLE OF t_pos, "trly_position_value,
+        li_pos1             TYPE TABLE OF t_pos, "trly_position_value,
+        lw_pos_tab          TYPE t_pos,
+        li_line             TYPE TABLE OF tline.
+
+  DATA : lv_eff_ratio       TYPE zzpros_ratio,
+         lv_utype_amort     TYPE tpm_dis_flowtype,
+         lv_utype_pnl       TYPE tpm_dis_flowtype,
+         lv_utype_oci       TYPE tpm_dis_flowtype,
+         lv_hitem_deal_no   TYPE tb_rfha,
+         lv_oci_amt         TYPE tpm_position_amt,
+         lv_nominal_amt     TYPE tpm_position_amt,
+         lv_lot_id          TYPE dift_pos_ident-lot_id,
+         lv_posting_amt_oci TYPE tpm_nominal_amt,
+         lv_date(10),
+         lv_pdate(10),
+         lv_lastdate        TYPE datum,
+         lv_total_sale      TYPE tpm_nominal_amt,
+         lv_nominal_sale    TYPE tpm_nominal_amt,
+         lv_name            TYPE thead-tdname,
+         lv_sec_id          TYPE dift_pos_ident-security_id.
+
+  FIELD-SYMBOLS : <ls_pos>    TYPE t_pos.   "trls_position_value.
+
+
+  TYPES: BEGIN OF t_port_trf_info,
+           bustransid           TYPE trlt_flow-transaction_oid,
+           company_code         TYPE bukrs,
+           security_id          TYPE vvranlw,
+           lotposition_org_date TYPE fti_lotposition_org_date,
+           deal_number          TYPE vtbfha-rfha,
+           nominal_amt          TYPE trlt_flow-nominal_amt,
+
+         END OF t_port_trf_info.
+
+  DATA : lw_port_trf_info TYPE t_port_trf_info,
+         lt_port_trf_info TYPE STANDARD TABLE OF t_port_trf_info.
+
+  DATA : lw_stk_swp_info TYPE t_port_trf_info,
+         lt_stk_swp_info TYPE STANDARD TABLE OF t_port_trf_info.
+
+  DATA: lv_yearl  TYPE c  LENGTH 4,
+        lv_year   TYPE c  LENGTH 4,
+        lv_month  TYPE c  LENGTH 2,
+        lv_month1 TYPE c  LENGTH 2,
+        lv_dat1   TYPE c  LENGTH 2,
+        lv_dat    TYPE c  LENGTH 2,
+        lv_msgid  TYPE symsgid,
+        lv_msgno  TYPE numc3,
+        lv_msgv1  TYPE symsgv,
+        lv_msgv2  TYPE symsgv,
+        lv_msgv3  TYPE symsgv,
+        lv_msgv4  TYPE symsgv.
+
+  REFRESH:li_pos.
+
+  CREATE OBJECT lo_protocol.
+
+
+  lv_start_date =  p_date+0(6) && '01'.
+
+  CALL FUNCTION 'DATE_GET_MONTH_LASTDAY'
+    EXPORTING
+      i_date = p_date
+    IMPORTING
+      e_date = lv_end_date.
+
+  IF p_date NE lv_end_date.
+    MESSAGE TEXT-051 TYPE 'E'.
+  ENDIF.
+
+* to get the previous month for the Key date
+  CALL FUNCTION 'MONTH_PLUS_DETERMINE'
+    EXPORTING
+      months  = -1
+      olddate = p_date
+    IMPORTING
+      newdate = lv_lastdate.
+
+
+  MESSAGE TEXT-050 TYPE 'I'.
+
+  p_bukrs = s_bukrs-low.
+
+  LOOP AT i_pos_ident INTO DATA(lw_pos_ident).
+
+    REFRESH :li_position.
+
+    CALL FUNCTION 'FTI_LDB_GET_POS_DATA'
+      EXPORTING
+        i_bukrs              = lw_pos_ident-company_code
+        i_valuation_area     = lw_pos_ident-valuation_area
+        i_prod_grp           = '1'
+        i_security_id        = lw_pos_ident-security_id
+        i_date               = p_date
+        i_no_zeros           = ''
+      IMPORTING
+        e_tab_position_value = li_position
+      EXCEPTIONS
+        incomplete_input     = 1
+        no_pos_sel           = 2
+        no_val_area          = 3
+        no_bukrs             = 4
+        no_sec_id            = 5
+        no_loan_contract     = 6
+        no_deal_num          = 7
+        no_sec_id_f          = 8
+        no_pos_act           = 9
+        OTHERS               = 10.
+    IF sy-subrc <> 0.
+* Implement suitable error handling here
+    ENDIF.
+
+    CHECK li_position[] IS NOT INITIAL.
+
+    DELETE li_position WHERE lotgeneration_bustranscat IS INITIAL. " remove ghost position
+    DELETE li_position WHERE lotgeneration_dealnr      IS INITIAL  " delete direct purchases except -
+                         AND ( lotgeneration_bustranscat NE '2016' AND " portoflio transfers
+                               lotgeneration_bustranscat NE '2010' AND " security account transfers
+                               lotgeneration_bustranscat NE '2202' ).  " corporate action - stock swap
+    DELETE li_position WHERE lotposition_init_date GT p_date.
+
+    IF li_position IS NOT INITIAL.
+      SELECT bukrs,
+             sanlf,
+             rkey1,
+             dguel_kk,
+             nlfd_ang,
+             dblfz,
+             delfz FROM vzzkoko INTO TABLE @DATA(li_vzzkoko)
+                       FOR ALL ENTRIES IN @li_position
+                       WHERE rkey1 = @li_position-security_id.
+
+      LOOP AT li_position INTO DATA(lw_position).
+        READ TABLE li_vzzkoko INTO DATA(lw_vzzkoko) WITH KEY rkey1 = lw_position-security_id.
+        IF sy-subrc = 0 AND p_date+0(6) LE lw_vzzkoko-delfz+0(6).
+          MOVE-CORRESPONDING lw_position TO lw_pos_tab.
+          AT NEW security_id.
+            DESCRIBE TABLE li_position LINES DATA(lv_lin).
+            IF lv_lin = 1.
+              lw_pos_tab-flag = abap_true.
+            ENDIF.
+          ENDAT.
+*          APPEND lw_position TO li_pos.
+          APPEND lw_pos_tab TO li_pos.
+        ENDIF.
+        CLEAR: lw_vzzkoko,lw_position,lw_pos_tab.
+      ENDLOOP.
+    ENDIF.
+  ENDLOOP.
+
+  IF li_pos[] IS INITIAL.
+    MESSAGE TEXT-052 TYPE 'S'.
+    EXIT.
+  ENDIF.
+
+* LOGIC BELOW TO ENHANCED TO PREVENT DUPLICATE RUN IN CONJUNCTION WITH REVERSAL FUNCTIONALITY
+  SELECT company_code,
+         key_date,
+        lot_id,
+        post_type  FROM ztr_amort INTO TABLE @DATA(li_amort)
+                      WHERE company_code = @p_bukrs
+                      AND security_id IN @s_sec_id  ORDER BY key_date DESCENDING..
+*                      and key_date = @p_date.
+*
+
+  SELECT   valuation_area,
+                 company_code,
+                 security_id,
+                 identified_oid,
+                 lot_id FROM dift_pos_ident INTO TABLE @DATA(li_ident)
+                          FOR   ALL ENTRIES IN @li_pos
+                       WHERE company_code = @p_bukrs
+                       AND  security_id = @li_pos-security_id
+                       AND  valuation_area = @li_pos-valuation_area
+                       AND  context = 'TRL'.
+
+  IF li_ident IS INITIAL.
+    MESSAGE TEXT-002 TYPE 'E'.
+  ENDIF.
+
+  IF li_ident IS NOT INITIAL.
+
+*     Getting liquidation flows
+    SELECT transaction_oid,
+       position_oid,
+      calculation_date,
+       trlflownumber,
+       flowtype,
+       position_amt,
+       nominal_amt,
+       quant_cat,
+       due_date   FROM trlt_flow INTO TABLE @DATA(li_flow_zero)
+                        FOR ALL ENTRIES IN @li_ident
+                        WHERE position_oid = @li_ident-identified_oid
+                         AND flowtype = 'SAM1104'.
+
+    SORT li_flow_zero DESCENDING BY calculation_date .
+*    DELETE ADJACENT DUPLICATES FROM li_flow_zero COMPARING flowtype .
+
+    " Getting liquidation flows
+    SELECT transaction_oid,
+       position_oid,
+      calculation_date,
+       trlflownumber,
+       flowtype,
+       position_amt,
+       nominal_amt,
+       quant_cat,
+       due_date   FROM trlt_flow APPENDING TABLE @li_flow_zero
+                        FOR ALL ENTRIES IN @li_ident
+                        WHERE position_oid = @li_ident-identified_oid
+                         AND flowtype = 'SE2000'.
+
+    IF li_flow_zero[] IS NOT INITIAL.
+      " Deleting flows other than Fixed
+      SELECT os_guid, booking_state FROM trlt_transaction INTO TABLE @DATA(lt_trn_zero)
+                                     FOR ALL ENTRIES IN @li_flow_zero
+                                     WHERE os_guid = @li_flow_zero-transaction_oid.
+
+      LOOP AT lt_trn_zero INTO DATA(ls_trn_zero) WHERE booking_state NE '2'.
+        DELETE li_flow_zero WHERE transaction_oid = ls_trn_zero-os_guid.
+      ENDLOOP.
+    ENDIF.
+
+    SORT li_flow_zero DESCENDING BY calculation_date .
+    " Getting the purchase flows
+    SELECT transaction_oid,
+       position_oid,
+      calculation_date,
+       trlflownumber,
+       flowtype,
+       position_amt,
+       nominal_amt,
+       quant_cat,
+       trldate,
+       due_date   FROM trlt_flow INTO TABLE @DATA(li_flow_purchase)
+                        FOR ALL ENTRIES IN @li_ident
+                        WHERE position_oid = @li_ident-identified_oid
+                         AND flowtype = 'SE1000'.
+
+    IF li_flow_purchase[] IS NOT INITIAL.
+      " Deleting flows other than Fixed
+      SELECT os_guid, booking_state FROM trlt_transaction INTO TABLE @DATA(lt_trn_purch)
+                                     FOR ALL ENTRIES IN @li_flow_purchase
+                                     WHERE os_guid = @li_flow_purchase-transaction_oid.
+
+      LOOP AT lt_trn_purch INTO DATA(ls_trn_purch) WHERE booking_state NE '2'.
+        DELETE li_flow_purchase WHERE transaction_oid = ls_trn_purch-os_guid.
+      ENDLOOP.
+    ENDIF.
+
+    " Getting the portfolio transfer outflows
+    SELECT transaction_oid,
+       position_oid,
+      calculation_date,
+       trlflownumber,
+       flowtype,
+       position_amt,
+       nominal_amt,
+       quant_cat,
+       trldate,
+       due_date FROM trlt_flow INTO TABLE @DATA(li_flow_port_trf)
+                            FOR ALL ENTRIES IN @li_ident
+                            WHERE position_oid = @li_ident-identified_oid
+                            AND flowtype EQ 'VT_001'.
+
+    " Getting the portfolio transfer inflows
+    SELECT transaction_oid,
+       position_oid,
+      calculation_date,
+       trlflownumber,
+       flowtype,
+       position_amt,
+       nominal_amt,
+       quant_cat,
+       trldate,
+       due_date FROM trlt_flow APPENDING TABLE @li_flow_port_trf
+                            FOR ALL ENTRIES IN @li_ident
+                            WHERE position_oid = @li_ident-identified_oid
+                            AND flowtype EQ 'VT_002'.
+
+    IF li_flow_port_trf[] IS NOT INITIAL.
+      " Deleting flows other than Fixed
+      SELECT os_guid, booking_state FROM trlt_transaction INTO TABLE @DATA(lt_trn_ptrf)
+                                     FOR ALL ENTRIES IN @li_flow_port_trf
+                                     WHERE os_guid = @li_flow_port_trf-transaction_oid.
+
+      LOOP AT lt_trn_ptrf INTO DATA(ls_trn_ptrf) WHERE booking_state NE '2'.
+        DELETE li_flow_port_trf WHERE transaction_oid = ls_trn_ptrf-os_guid.
+      ENDLOOP.
+    ENDIF.
+
+
+    " Getting the sec acc transfer outflows
+    SELECT transaction_oid,
+       position_oid,
+      calculation_date,
+       trlflownumber,
+       flowtype,
+       position_amt,
+       nominal_amt,
+       quant_cat,
+       trldate,
+       due_date FROM trlt_flow INTO TABLE @DATA(li_flow_sacc_trf)
+                            FOR ALL ENTRIES IN @li_ident
+                            WHERE position_oid = @li_ident-identified_oid
+                            AND flowtype EQ 'SAT2010'.
+
+    " Getting the sec acc transfer inflows
+    SELECT transaction_oid,
+       position_oid,
+      calculation_date,
+       trlflownumber,
+       flowtype,
+       position_amt,
+       nominal_amt,
+       quant_cat,
+       trldate,
+       due_date FROM trlt_flow APPENDING TABLE @li_flow_sacc_trf
+                            FOR ALL ENTRIES IN @li_ident
+                            WHERE position_oid = @li_ident-identified_oid
+                            AND flowtype EQ 'SAT1020'.
+
+    IF li_flow_sacc_trf[] IS NOT INITIAL.
+      " Deleting flows other than Fixed
+      SELECT os_guid, booking_state FROM trlt_transaction INTO TABLE @DATA(lt_trn_satrf)
+                                     FOR ALL ENTRIES IN @li_flow_sacc_trf
+                                     WHERE os_guid = @li_flow_sacc_trf-transaction_oid.
+
+      LOOP AT lt_trn_satrf INTO DATA(ls_trn_satrf) WHERE booking_state NE '2'.
+        DELETE li_flow_sacc_trf WHERE transaction_oid = ls_trn_satrf-os_guid.
+      ENDLOOP.
+    ENDIF.
+
+    " Getting the stock swap inflows
+    SELECT transaction_oid,
+       position_oid,
+      calculation_date,
+       trlflownumber,
+       flowtype,
+       position_amt,
+       nominal_amt,
+       quant_cat,
+       trldate,
+       due_date FROM trlt_flow INTO TABLE @DATA(li_flow_stk_swp)
+                            FOR ALL ENTRIES IN @li_ident
+                            WHERE position_oid = @li_ident-identified_oid
+                            AND flowtype EQ 'CA0001'.
+
+    IF li_flow_stk_swp[] IS NOT INITIAL.
+      " Deleting flows other than Fixed
+      SELECT os_guid, booking_state FROM trlt_transaction INTO TABLE @DATA(lt_trn_stkswp)
+                                     FOR ALL ENTRIES IN @li_flow_stk_swp
+                                     WHERE os_guid = @li_flow_stk_swp-transaction_oid.
+
+      LOOP AT lt_trn_stkswp INTO DATA(ls_trn_stkswp) WHERE booking_state NE '2'.
+        DELETE li_flow_stk_swp WHERE transaction_oid = ls_trn_stkswp-os_guid.
+      ENDLOOP.
+    ENDIF.
+
+    " In case of stock swap inflows, get the corresponding outflow from originating position and get position details
+    IF li_flow_stk_swp[] IS NOT INITIAL.
+      SELECT transaction_oid,
+       position_oid,
+      calculation_date,
+       trlflownumber,
+       flowtype,
+       position_amt,
+       nominal_amt,
+       quant_cat,
+       trldate,
+       due_date FROM trlt_flow INTO TABLE @DATA(li_flow_swp_org)
+                              FOR ALL ENTRIES IN @li_flow_stk_swp
+                              WHERE transaction_oid = @li_flow_stk_swp-transaction_oid
+                              AND flowtype EQ 'CA0002'.
+
+      IF li_flow_swp_org IS NOT INITIAL.
+*****************************************************************************************************
+*        SELECT transaction_oid,
+*            position_oid,
+*           calculation_date,
+*            trlflownumber,
+*            flowtype,
+*            position_amt,
+*            nominal_amt,
+*            quant_cat,
+*            trldate,
+*            due_date FROM trlt_flow INTO TABLE @DATA(li_flow_swp_inf)
+*                                   FOR ALL ENTRIES IN @li_flow_swp_org
+*                                   WHERE position_oid = @li_flow_swp_org-position_oid
+*                                   AND flowtype EQ 'SE1000'.
+
+*        IF li_flow_swp_inf IS NOT INITIAL.
+        SELECT valuation_area,
+               company_code,
+               security_id,
+               identified_oid,
+               lot_id,
+               deal_number FROM dift_pos_ident INTO TABLE @DATA(li_ident_swp_org)
+                        FOR   ALL ENTRIES IN @li_flow_swp_org
+                     WHERE identified_oid = @li_flow_swp_org-position_oid.
+*        ENDIF.
+
+        IF li_ident_swp_org IS NOT INITIAL.
+
+          SELECT bukrs,
+                rfha,
+               rldepo,
+               delfz,
+                ranl,
+                rportb FROM vtbfha INTO TABLE @DATA(li_tab)
+                      FOR ALL ENTRIES IN @li_ident_swp_org
+                      WHERE bukrs     = @li_ident_swp_org-company_code
+                      AND ranl        = @li_ident_swp_org-security_id.
+        ENDIF.
+
+*************************************************************************************************************
+
+*        SELECT   valuation_area,
+*        company_code,
+*        security_id,
+*        identified_oid,
+*        lot_id FROM dift_pos_ident INTO TABLE @DATA(li_ident_swp_org)
+*                 FOR   ALL ENTRIES IN @li_flow_swp_org
+*              WHERE identified_oid = @li_flow_swp_org-position_oid.
+*        IF sy-subrc EQ 0.
+*          LOOP AT li_ident_swp_org INTO DATA(lw_ident_swp_org).
+*            CALL FUNCTION 'FTI_LDB_GET_POS_DATA'
+*              EXPORTING
+*                i_bukrs              = lw_ident_swp_org-company_code
+*                i_valuation_area     = lw_ident_swp_org-valuation_area
+*                i_prod_grp           = '1'
+*                i_security_id        = lw_ident_swp_org-security_id
+*                i_date               = p_date
+*                i_no_zeros           = ''
+*              IMPORTING
+*                e_tab_position_value = li_position_swp_org
+*              EXCEPTIONS
+*                incomplete_input     = 1
+*                no_pos_sel           = 2
+*                no_val_area          = 3
+*                no_bukrs             = 4
+*                no_sec_id            = 5
+*                no_loan_contract     = 6
+*                no_deal_num          = 7
+*                no_sec_id_f          = 8
+*                no_pos_act           = 9
+*                OTHERS               = 10.
+*            IF sy-subrc <> 0.
+**            Implement suitable error handling here
+*            ENDIF.
+*
+*            DELETE li_position WHERE lotgeneration_bustranscat IS INITIAL. " remove ghost position
+*            DELETE li_position WHERE lotgeneration_dealnr      IS INITIAL.  " delete direct purchases except
+*            DELETE li_position WHERE lotposition_init_date GT p_date.
+*            READ TABLE li_position_swp_org INTO lw_position_swp_org INDEX 1.
+*            IF sy-subrc EQ 0.
+*              READ TABLE li_flow_swp_org INTO DATA(lw_flow_swp) WITH KEY position_oid = lw_ident_swp_org-identified_oid.
+*              IF sy-subrc EQ 0.
+*                lw_stk_swp_info-bustransid = lw_flow_swp-transaction_oid.
+*                lw_stk_swp_info-deal_number = lw_position_swp_org-lotgeneration_dealnr.
+*                lw_stk_swp_info-nominal_amt = lw_flow_swp-nominal_amt.
+**                lw_port_trf_info-company_code   = <ls_pos>-company_code .
+**                lw_port_trf_info-security_id    = <ls_pos>-security_id  .
+**                lw_port_trf_info-lotposition_org_date = <ls_pos>-lotposition_org_date .
+*                APPEND lw_stk_swp_info TO lt_stk_swp_info.
+*              ENDIF.
+*            ENDIF.
+*          ENDLOOP.
+*        ENDIF.
+      ENDIF.
+    ENDIF.
+
+    " Getting the stock swap outflows
+    SELECT transaction_oid,
+       position_oid,
+      calculation_date,
+       trlflownumber,
+       flowtype,
+       position_amt,
+       nominal_amt,
+       quant_cat,
+       trldate,
+       due_date FROM trlt_flow APPENDING TABLE @li_flow_stk_swp
+                            FOR ALL ENTRIES IN @li_ident
+                            WHERE position_oid = @li_ident-identified_oid
+                            AND flowtype EQ 'CA0002'.
+
+
+    IF li_flow_stk_swp[] IS NOT INITIAL.
+      " Deleting flows other than Fixed
+      SELECT os_guid, booking_state FROM trlt_transaction INTO TABLE @DATA(lt_trn_stkswp1)
+                                     FOR ALL ENTRIES IN @li_flow_stk_swp
+                                     WHERE os_guid = @li_flow_stk_swp-transaction_oid.
+
+      LOOP AT lt_trn_stkswp1 INTO DATA(ls_trn_stkswp1) WHERE booking_state NE '2'.
+        DELETE li_flow_stk_swp WHERE transaction_oid = ls_trn_stkswp1-os_guid.
+      ENDLOOP.
+
+*      DATA(li_flow_ca02) = li_flow_stk_swp.
+*      DELETE li_flow_ca02 WHERE flowtype = 'CA0001'.
+*
+*      APPEND LINES OF li_flow_ca02 TO li_flow_zero.
+
+    ENDIF.
+  ENDIF.
+****
+***** handling bond position liquidations / maturity in the posting period
+****  LOOP AT li_pos ASSIGNING <ls_pos>.
+****
+****    CLEAR <ls_pos>-nominal_org_amt_pc.
+****    READ TABLE li_ident INTO DATA(lw_ident) WITH KEY lot_id = <ls_pos>-lot_id.
+****
+****    LOOP AT li_flow_zero INTO DATA(lw_flow_zero1) WHERE position_oid = lw_ident-identified_oid.
+****
+****      IF <ls_pos>-nominal_amt EQ 0.
+****
+****        READ TABLE li_flow_zero INTO DATA(lw_flow_zero) INDEX 1.
+****        IF lw_flow_zero-calculation_date < lv_start_date.
+****          DELETE li_pos.
+****          EXIT.
+****        ENDIF.
+****
+****      ENDIF.
+****
+****      IF lw_flow_zero1-calculation_date >= lv_start_date AND lw_flow_zero1-calculation_date <= lv_end_date.
+****        <ls_pos>-nominal_org_amt_pc = <ls_pos>-nominal_org_amt_pc + lw_flow_zero1-nominal_amt.
+****      ENDIF.
+****
+****    ENDLOOP.
+****  ENDLOOP.
+
+* handling bond position liquidations / maturity in the posting period
+  LOOP AT li_pos ASSIGNING <ls_pos>.
+
+    CLEAR <ls_pos>-nominal_org_amt_pc.
+    READ TABLE li_ident INTO DATA(lw_ident) WITH KEY lot_id = <ls_pos>-lot_id.
+
+    LOOP AT li_flow_zero INTO DATA(lw_flow_zero1) WHERE position_oid = lw_ident-identified_oid.
+
+      IF <ls_pos>-nominal_amt EQ 0.
+*        READ TABLE li_flow_zero INTO DATA(lw_flow_zero) INDEX 1.
+*        IF lw_flow_zero-calculation_date < lv_start_date.
+        IF lw_flow_zero1-due_date IS NOT INITIAL AND lw_flow_zero1-due_date < lv_start_date.
+          DELETE li_pos.
+          EXIT.
+        ENDIF.
+      ENDIF.
+
+      IF lw_flow_zero1-flowtype = 'SAM1104'.
+        IF lw_flow_zero1-due_date GE lv_start_date AND lw_flow_zero1-due_date LE lv_end_date.
+          <ls_pos>-nominal_org_amt_pc = <ls_pos>-nominal_org_amt_pc + lw_flow_zero1-nominal_amt.
+        ENDIF.
+      ELSEIF lw_flow_zero1-flowtype = 'SE2000'." OR lw_flow_zero1-flowtype = 'CA0002'.
+        IF lw_flow_zero1-calculation_date GE lv_start_date AND lw_flow_zero1-calculation_date LE lv_end_date.
+          <ls_pos>-nominal_org_amt_pc = <ls_pos>-nominal_org_amt_pc + lw_flow_zero1-nominal_amt.
+        ENDIF.
+      ENDIF.
+    ENDLOOP.
+  ENDLOOP.
+
+  REFRESH: li_pos1.
+* handling portfolio / sec acc transfer / stock swap scenarios - Outflow
+  LOOP AT li_pos ASSIGNING <ls_pos> WHERE nominal_amt = 0.
+    IF <ls_pos>-flag NE abap_true.
+      READ TABLE li_ident INTO DATA(lw_ident_trf) WITH KEY lot_id = <ls_pos>-lot_id.
+      IF sy-subrc = 0.
+        """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+
+        LOOP AT li_flow_zero INTO lw_flow_zero1 WHERE position_oid = lw_ident_trf-identified_oid.
+*                                                     AND calculation_date GE lv_start_date
+*                                                      AND calculation_date LE lv_end_date.
+          lv_nominal_amt = lv_nominal_amt + lw_flow_zero1-nominal_amt.
+        ENDLOOP.
+*        <ls_pos>-nominal_amt = lv_nominal_amt.
+        """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+        READ TABLE li_flow_purchase INTO DATA(lw_pur_flow) WITH KEY position_oid = lw_ident_trf-identified_oid
+                                                                       flowtype     = 'SE1000'.
+        IF sy-subrc = 0.
+          CLEAR lw_port_trf_info.
+          lw_port_trf_info-bustransid     = lw_pur_flow-transaction_oid.
+          lw_port_trf_info-deal_number    = <ls_pos>-lotgeneration_dealnr.
+          lw_port_trf_info-nominal_amt    = lv_nominal_amt. "lw_pur_flow-nominal_amt.
+          lw_port_trf_info-company_code   = <ls_pos>-company_code .
+          lw_port_trf_info-security_id    = <ls_pos>-security_id  .
+          lw_port_trf_info-lotposition_org_date = <ls_pos>-lotposition_org_date .
+
+          IF <ls_pos>-lotposition_org_date = <ls_pos>-lotposition_init_date
+                                 AND <ls_pos>-lotgeneration_bustranscat   = '2001'.
+            APPEND lw_port_trf_info TO lt_port_trf_info.
+            CLEAR: lv_nominal_amt.
+          ENDIF.
+          APPEND <ls_pos> TO li_pos1.
+          DELETE li_pos.
+
+        ELSE.
+          READ TABLE li_flow_port_trf INTO DATA(lw_flow_port_trf) WITH KEY position_oid = lw_ident_trf-identified_oid
+                                                                           flowtype     = 'VT_001'.
+          IF sy-subrc EQ 0.
+            CLEAR lw_port_trf_info.
+            lw_port_trf_info-bustransid     = lw_flow_port_trf-transaction_oid.
+            lw_port_trf_info-deal_number    = <ls_pos>-lotgeneration_dealnr.
+            lw_port_trf_info-nominal_amt    = lv_nominal_amt." lw_flow_port_trf-nominal_amt.
+            lw_port_trf_info-company_code   = <ls_pos>-company_code .
+            lw_port_trf_info-security_id    = <ls_pos>-security_id  .
+            lw_port_trf_info-lotposition_org_date = <ls_pos>-lotposition_org_date .
+
+            IF <ls_pos>-lotposition_org_date = <ls_pos>-lotposition_init_date
+                                   AND <ls_pos>-lotgeneration_bustranscat   = '2001'.
+              APPEND lw_port_trf_info TO lt_port_trf_info.
+              CLEAR: lv_nominal_amt.
+            ENDIF.
+            DELETE li_pos.
+
+          ELSE. " sec acc outflow
+            READ TABLE li_flow_sacc_trf INTO DATA(lw_flow_sacc_trf) WITH KEY position_oid = lw_ident_trf-identified_oid
+                                                                             flowtype     = 'SAT2010'.
+            IF sy-subrc EQ 0.
+              CLEAR lw_port_trf_info.
+              lw_port_trf_info-bustransid     = lw_flow_sacc_trf-transaction_oid.
+              lw_port_trf_info-deal_number    = <ls_pos>-lotgeneration_dealnr.
+              lw_port_trf_info-nominal_amt    = lv_nominal_amt."lw_flow_sacc_trf-nominal_amt.
+              lw_port_trf_info-company_code   = <ls_pos>-company_code .
+              lw_port_trf_info-security_id    = <ls_pos>-security_id  .
+              lw_port_trf_info-lotposition_org_date = <ls_pos>-lotposition_org_date .
+
+              IF <ls_pos>-lotposition_org_date = <ls_pos>-lotposition_init_date
+                                     AND <ls_pos>-lotgeneration_bustranscat   = '2001'.
+                APPEND lw_port_trf_info TO lt_port_trf_info.
+                CLEAR: lv_nominal_amt.
+              ENDIF.
+              DELETE li_pos.
+
+            ELSE. " handling stock swap outflow
+              READ TABLE li_flow_stk_swp INTO DATA(lw_flow_stk_swp) WITH KEY position_oid = lw_ident_trf-identified_oid
+                                                                             flowtype     = 'CA0002'.
+              IF sy-subrc EQ 0.
+                DELETE li_pos.
+              ENDIF.
+            ENDIF.
+          ENDIF.
+        ENDIF.
+      ENDIF.
+    ENDIF.
+  ENDLOOP.
+
+  LOOP AT li_pos ASSIGNING <ls_pos>." WHERE nominal_amt NE 0.
+
+    IF <ls_pos>-lotgeneration_dealnr = ' '.
+      READ TABLE lt_port_trf_info INTO lw_port_trf_info WITH KEY company_code  = <ls_pos>-company_code
+                                                                 security_id   = <ls_pos>-security_id
+                                                                 lotposition_org_date = <ls_pos>-lotposition_org_date .
+      IF sy-subrc = 0.
+        <ls_pos>-lotgeneration_dealnr = lw_port_trf_info-deal_number.
+        IF  <ls_pos>-nominal_amt = 0.
+          <ls_pos>-nominal_amt = lw_port_trf_info-nominal_amt.  "  given for SE1000
+        ENDIF.
+      ELSE.
+        READ TABLE li_flow_stk_swp INTO lw_flow_stk_swp WITH KEY position_oid = <ls_pos>-position_oid
+                                                                 flowtype  = 'CA0001'.
+        IF sy-subrc EQ 0.
+          READ TABLE li_flow_swp_org INTO DATA(lw_flow_swp_org) WITH KEY transaction_oid = lw_flow_stk_swp-transaction_oid.
+          IF sy-subrc = 0.
+*            READ TABLE li_flow_swp_inf INTO DATA(lw_flow_swp_inf) WITH KEY position_oid = lw_flow_swp_org-position_oid.
+*            IF sy-subrc = 0.
+            IF  <ls_pos>-nominal_amt = 0.
+              <ls_pos>-nominal_amt = lw_flow_swp_org-nominal_amt.
+              ENDIF.
+              READ TABLE li_ident_swp_org INTO DATA(lw_ident_swp_org) WITH KEY identified_oid = lw_flow_swp_org-position_oid.
+              IF sy-subrc = 0.
+                READ TABLE li_tab INTO DATA(lw_tab) WITH KEY bukrs = lw_ident_swp_org-company_code
+                                                            ranl = lw_ident_swp_org-security_id
+                                                            delfz = <ls_pos>-lotposition_org_date.
+                IF sy-subrc = 0.
+                  <ls_pos>-lotgeneration_dealnr = lw_tab-rfha.
+                ELSE.
+                  DELETE li_pos.
+*                ENDIF.
+              ENDIF.
+            ENDIF.
+          ENDIF.
+        ELSE.
+          DELETE li_pos.
+        ENDIF.
+      ENDIF.
+    ENDIF.
+    CLEAR: lw_port_trf_info.
+  ENDLOOP.
+
+******* handling portfolio transfer scenarios - Inflow
+******  LOOP AT li_pos ASSIGNING <ls_pos> WHERE nominal_amt NE 0.
+******    READ TABLE li_ident INTO DATA(lw_ident_trf1) WITH KEY lot_id = <ls_pos>-lot_id.
+******    READ TABLE li_flow_port_trf INTO DATA(lw_flow_port_trf1) WITH KEY position_oid = lw_ident_trf1-identified_oid
+******                                                                     flowtype     = 'VT_002'.
+******    IF sy-subrc EQ 0.
+******      CLEAR lw_port_trf_info.
+******      READ TABLE lt_port_trf_info INTO lw_port_trf_info WITH KEY bustransid = lw_flow_port_trf1-transaction_oid.
+******      IF sy-subrc EQ 0.
+******        <ls_pos>-lotgeneration_dealnr = lw_port_trf_info-deal_number.
+******      ELSE.
+******        DELETE li_pos. " if there was no matching flow in the hedged position, it means it was a portfolio transfer of a non hedged position
+******        " and must be excluded from processing of this program
+******      ENDIF.
+******    ENDIF.
+******  ENDLOOP.
+******
+******
+******
+******* handling sec acc transfer scenarios - Inflow
+******  LOOP AT li_pos ASSIGNING <ls_pos> WHERE nominal_amt NE 0.
+******    READ TABLE li_ident INTO DATA(lw_ident_trf2) WITH KEY lot_id = <ls_pos>-lot_id.
+******    READ TABLE li_flow_sacc_trf INTO DATA(lw_flow_sacc_trf1) WITH KEY position_oid = lw_ident_trf2-identified_oid
+******                                                                     flowtype     = 'SAT1020'.
+******    IF sy-subrc EQ 0.
+******      CLEAR lw_port_trf_info.
+******      READ TABLE lt_port_trf_info INTO lw_port_trf_info WITH KEY bustransid = lw_flow_sacc_trf1-transaction_oid.
+******      IF sy-subrc EQ 0.
+******        <ls_pos>-lotgeneration_dealnr = lw_port_trf_info-deal_number.
+******      ELSE.
+******        DELETE li_pos. " if there was no matching flow in the hedged position, it means it was a sec acc transfer of a non hedged position
+******        " and must be excluded from processing of this program
+******      ENDIF.
+******    ENDIF.
+******  ENDLOOP.
+******
+******
+******* handling stock swap scenarios - Inflow
+******  LOOP AT li_pos ASSIGNING <ls_pos> WHERE nominal_amt NE 0.
+******    READ TABLE li_ident INTO DATA(lw_ident_trf3) WITH KEY lot_id = <ls_pos>-lot_id.
+******    READ TABLE li_flow_stk_swp INTO DATA(lw_flow_stk_swp1) WITH KEY position_oid = lw_ident_trf3-identified_oid
+******                                                                     flowtype     = 'CA0001'.
+******    IF sy-subrc EQ 0.
+******      CLEAR lw_stk_swp_info.
+******      READ TABLE lt_stk_swp_info INTO lw_stk_swp_info WITH KEY bustransid = lw_flow_stk_swp1-transaction_oid.
+******      IF sy-subrc EQ 0.
+******        <ls_pos>-lotgeneration_dealnr = lw_stk_swp_info-deal_number.
+******      ELSE.
+******        DELETE li_pos. " if there was no matching flow in the hedged position, it means it was a stock swap of a non hedged position
+******        " and must be excluded from processing of this program
+******      ENDIF.
+******    ENDIF.
+******  ENDLOOP.
+
+
+  CLEAR : lv_start_date, lv_start_date_calc, lv_end_date, lv_flag, lv_flag1.
+
+  IF li_pos IS INITIAL.
+    MESSAGE TEXT-052 TYPE 'S'.
+    EXIT.
+  ELSE.
+
+    SELECT bukrs
+          rfha
+          ranl
+          rportb
+          rcomvalcl
+          refer
+          vrfha INTO TABLE li_vtbfha FROM vtbfha
+                FOR ALL ENTRIES IN li_pos
+                WHERE bukrs     = p_bukrs
+                AND rfha        = li_pos-lotgeneration_dealnr.
+
+* the derivative deal number is stored in memo field of security lot generation deal in case of delivery of IRS and DSF
+    LOOP AT li_vtbfha ASSIGNING <lw_vtbfha>.
+
+      CLEAR lv_name.
+      lv_name = <lw_vtbfha>-bukrs && <lw_vtbfha>-rfha.
+      CALL FUNCTION 'READ_TEXT'
+        EXPORTING
+          client                  = sy-mandt
+          id                      = '0006'
+          language                = sy-langu
+          name                    = lv_name
+          object                  = 'TB_FHA'
+        TABLES
+          lines                   = li_line
+        EXCEPTIONS
+          id                      = 1
+          language                = 2
+          name                    = 3
+          not_found               = 4
+          object                  = 5
+          reference_check         = 6
+          wrong_access_to_archive = 7
+          OTHERS                  = 8.
+      IF sy-subrc = 0.
+        READ TABLE li_line INTO DATA(lw_line) INDEX 1.
+        IF sy-subrc = 0.
+          CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+            EXPORTING
+              input  = lw_line-tdline
+            IMPORTING
+              output = <lw_vtbfha>-refer.
+        ENDIF.
+      ENDIF.
+*      ENDIF.
+
+    ENDLOOP.
+
+    IF li_vtbfha IS NOT INITIAL.
+
+      SELECT bukrs,
+             rfha,
+             sgsart,
+             rportb,
+             vrfha FROM vtbfha INTO TABLE @DATA(li_vtbfha_der)
+                   FOR ALL ENTRIES IN @li_vtbfha
+                   WHERE bukrs =  @li_vtbfha-bukrs
+                   AND   rfha  =  @li_vtbfha-refer.
+
+      IF li_vtbfha_der IS NOT INITIAL.
+
+        SELECT os_guid,
+               identified_oid,
+               valuation_area,
+               company_code,
+               security_id,
+               lot_id,
+               deal_number INTO TABLE @DATA(li_dift_pos) FROM dift_pos_ident
+                          FOR ALL ENTRIES IN @li_vtbfha_der
+                          WHERE valuation_area = @v_val_a
+                          AND company_code = @li_vtbfha_der-bukrs
+                          AND deal_number  = @li_vtbfha_der-rfha
+                          AND context  = 'TRL'.
+
+      ENDIF.
+
+      SELECT  company_code,
+              hrel_number,
+              hinst_deal_no INTO TABLE @DATA(li_hrel) FROM ztr_hrel
+                            FOR ALL ENTRIES IN @li_vtbfha
+                            WHERE company_code = @li_vtbfha-bukrs
+                            AND  hinst_deal_no = @li_vtbfha-refer.
+
+
+      IF li_dift_pos IS NOT INITIAL.
+
+        SELECT transaction_oid,
+               position_oid,
+               calculation_date,
+               trlflownumber,
+               flowtype,
+               position_amt,
+               nominal_amt,
+               quant_cat,
+               trldate,
+               due_date FROM trlt_flow INTO TABLE @DATA(li_flow)
+                                        FOR ALL ENTRIES IN @li_dift_pos
+                                        WHERE position_oid = @li_dift_pos-identified_oid.
+
+      ENDIF.
+
+      IF li_hrel IS NOT INITIAL.
+* reading effectiveness test data on the keydate
+        SELECT * INTO TABLE @DATA(li_et_result)
+                             FROM ztr_et_result FOR ALL ENTRIES IN @li_hrel
+                             WHERE company_code = @li_hrel-company_code AND
+                                   hrel_number  = @li_hrel-hrel_number.
+      ENDIF.
+    ENDIF.
+  ENDIF.
+
+  SELECT SINGLE datfm FROM usr01 INTO @DATA(l_datfm) WHERE bname = @sy-uname.
+
+* Now process each eligible position lot for posting
+  LOOP AT li_pos INTO DATA(lw_pos).
+    CLEAR :  lv_eff_ratio, lv_hitem_deal_no, lv_oci_amt, lv_posting_amt_oci, lv_posting_amt_amort, lv_posting_amt_pnl.
+
+    READ TABLE li_vtbfha INTO DATA(lw_vtbfha) WITH KEY rfha = lw_pos-lotgeneration_dealnr.
+    IF sy-subrc = 0.
+      READ TABLE li_dift_pos INTO DATA(lw_dift_pos) WITH KEY deal_number = lw_vtbfha-refer.
+      IF sy-subrc NE 0.
+        CONTINUE.
+      ELSE.
+
+        READ TABLE li_vtbfha_der INTO DATA(lw_vtbfha_der) WITH KEY rfha = lw_vtbfha-refer.
+        IF sy-subrc = 0.
+          DATA(lv_assignment) = '$OCI$' && lw_vtbfha_der-rfha.
+        ENDIF.
+
+        lv_start_date =  p_date+0(6) && '01'.
+        lv_start_date_calc = lv_start_date.
+
+*        IF lw_pos-lotposition_init_date > lv_start_date.
+        IF lw_pos-lotposition_org_date > lv_start_date.
+
+          CLEAR lv_me_date.
+          CALL FUNCTION 'DATE_GET_MONTH_LASTDAY'
+            EXPORTING
+*             i_date = lw_pos-lotposition_init_date
+              i_date = lw_pos-lotposition_org_date
+            IMPORTING
+              e_date = lv_me_date.
+
+*          lv_start_date   = lw_pos-lotposition_init_date.
+          lv_start_date   = lw_pos-lotposition_org_date.
+
+          IF lw_pos-lotposition_init_date = lv_me_date.
+            lv_start_date_calc = lv_start_date.
+          ELSE.
+            lv_start_date_calc   = lv_start_date + 1.
+          ENDIF.
+        ENDIF.
+
+        CLEAR: lw_security_details.
+
+        " Reading bond details to get the maturity date
+        CALL FUNCTION 'SECURITY_READ'
+          EXPORTING
+            i_security_number   = lw_vtbfha-ranl
+          IMPORTING
+            e_security          = lw_security_details
+          EXCEPTIONS
+            security_not_exists = 1
+            OTHERS              = 2.
+        IF sy-subrc <> 0.
+* Implement suitable error handling here
+        ENDIF.
+
+        IF lw_security_details-final_due_date < p_date.
+          lv_end_date = lw_security_details-final_due_date.
+        ELSE.
+          lv_end_date     = p_date.
+        ENDIF.
+
+        READ TABLE li_hrel INTO DATA(lw_hrel) WITH KEY company_code = lw_vtbfha-bukrs
+                                                       hinst_deal_no = lw_vtbfha-refer.
+        IF sy-subrc = 0.
+          READ TABLE li_et_result INTO DATA(lw_et_result) WITH KEY  company_code = lw_hrel-company_code
+                                                                    hrel_number  = lw_hrel-hrel_number
+                                                                    test_date    = lw_pos-lotposition_org_date.
+          IF sy-subrc = 0.
+            "Process only if PET and RET are effective
+            IF lw_et_result-pet_result NE '1' OR lw_et_result-ret_result NE '1'.
+              CONTINUE.
+            ENDIF.
+            " taking RET ratio now because RET will be dollar offset
+            lv_eff_ratio = lw_et_result-ret_ratio.
+            IF lv_eff_ratio > 1.
+              lv_eff_ratio = 1.
+            ENDIF.
+          ENDIF.
+        ENDIF.
+
+* taking all oci flows to get the net OCI outstanding
+        IF lw_vtbfha_der-sgsart EQ 'DSF'.
+          LOOP AT li_flow INTO DATA(lw_flow_dsf) WHERE position_oid = lw_dift_pos-identified_oid
+                                                  AND flowtype CS 'DEZDGL'
+                                                  AND calculation_date = lw_pos-lotposition_org_date.
+            lv_oci_amt = lv_oci_amt + lw_flow_dsf-position_amt.
+            IF lw_flow_dsf-calculation_date BETWEEN lv_start_date AND lv_end_date.
+              lv_posting_amt_oci = lv_eff_ratio * lv_oci_amt.
+            ENDIF.
+          ENDLOOP.
+        ELSEIF lw_vtbfha_der-sgsart EQ 'IRS'.
+          LOOP AT li_flow INTO DATA(lw_flow_irs) WHERE position_oid = lw_dift_pos-identified_oid
+                                                  AND flowtype CS 'DE1906'
+                                                  AND trldate = lw_pos-lotposition_org_date.
+            lv_oci_amt = lv_oci_amt + lw_flow_irs-position_amt.
+            IF lw_flow_irs-trldate BETWEEN lv_start_date AND lv_end_date.
+              lv_posting_amt_oci = lv_eff_ratio * lv_oci_amt.
+            ENDIF.
+          ENDLOOP.
+        ENDIF.
+
+        READ TABLE li_ident INTO DATA(lw_dift_purch) WITH KEY lot_id = lw_pos-lot_id.
+        " total the sales till previous period
+
+        CLEAR lv_total_sale.
+        LOOP AT li_flow_zero INTO DATA(lw_flow_sale) WHERE position_oid = lw_dift_purch-identified_oid.
+          IF lw_flow_sale-calculation_date < lv_start_date.
+            lv_total_sale = lv_total_sale + lw_flow_sale-nominal_amt.
+          ENDIF.
+          lv_nominal_sale = lv_nominal_sale + lw_flow_sale-nominal_amt.
+
+          IF lw_flow_sale-flowtype = 'SE2000'." OR lw_flow_sale-flowtype = 'CA0002'.
+            IF lw_flow_sale-calculation_date >= lv_start_date AND lw_flow_sale-calculation_date <= lv_end_date.
+              DATA(lv_sale_date) = lw_flow_sale-calculation_date.
+            ENDIF.
+          ELSEIF lw_flow_sale-flowtype = 'SAM1104'.
+            IF lw_flow_sale-due_date >= lv_start_date AND lw_flow_sale-due_date <= lv_end_date.
+              lv_sale_date = lw_flow_sale-due_date.
+            ENDIF.
+          ENDIF.
+
+        ENDLOOP.
+
+        READ TABLE li_pos1 INTO DATA(lw_pos1) WITH KEY company_code = lw_pos-company_code """""""""start of addition for se1000
+                                                       security_id  = lw_pos-security_id.
+        IF sy-subrc = 0.
+          READ TABLE li_ident INTO lw_ident_trf WITH KEY lot_id = lw_pos1-lot_id.
+*       read the original nominal amount from purchase flow
+
+          READ TABLE li_flow_purchase INTO DATA(lw_flow_purchase) WITH KEY position_oid = lw_ident_trf-identified_oid.
+        ELSE.                                                                                           " end of addition for se1000
+          READ TABLE li_flow_purchase INTO lw_flow_purchase WITH KEY position_oid = lw_dift_purch-identified_oid.
+        ENDIF.
+*       If no purchase flow available, check if the lot was created as a result of portfolio / sec acc transfer
+        IF lw_flow_purchase IS INITIAL.
+          READ TABLE li_flow_port_trf INTO DATA(lw_flow_trf) WITH KEY position_oid = lw_dift_purch-identified_oid
+                                                                      flowtype     = 'VT_002'.
+          IF sy-subrc EQ 0.
+            lw_flow_purchase-nominal_amt = lw_flow_trf-nominal_amt.
+          ELSE. " check for sec acc trf
+*            READ TABLE li_flow_port_trf INTO DATA(lw_flow_strf) WITH KEY position_oid = lw_dift_purch-identified_oid
+            READ TABLE li_flow_sacc_trf INTO DATA(lw_flow_strf) WITH KEY position_oid = lw_dift_purch-identified_oid
+                                                                         flowtype     = 'SAT1020'.
+            IF sy-subrc EQ 0.
+              lw_flow_purchase-nominal_amt = lw_flow_strf-nominal_amt.
+            ELSE. " check for stock swap
+              READ TABLE li_flow_stk_swp INTO DATA(lw_flow_swp1) WITH KEY position_oid = lw_dift_purch-identified_oid
+                                                                          flowtype     = 'CA0001'.
+              IF sy-subrc EQ 0.
+                lw_flow_purchase-nominal_amt = lw_flow_swp1-nominal_amt.
+              ENDIF.
+            ENDIF.
+          ENDIF.
+        ENDIF.
+
+* calculate 2 amounts here -
+* 1 - amount to amortize - prorated portion of OCI based on available nominal
+* 2 - amount to pnl - prorated portion of OCI based on liquidated nominal
+
+        CLEAR : lv_days_numerator, lv_days_denominator.
+
+        lv_days_numerator = ( lv_end_date - lv_start_date_calc ).
+*        IF lv_days_numerator NE 0.
+        lv_days_numerator =  lv_days_numerator + 1.
+*        ENDIF.
+        IF lv_start_date LE lv_sale_date AND lv_end_date GT lv_sale_date.
+          DATA(lv_num1) = lv_sale_date - lv_start_date_calc.
+*          IF lv_num1 NE 0.
+          lv_num1 =  lv_num1 + 1.
+*          ENDIF.
+        ENDIF.
+
+        lv_days_denominator = lw_security_details-final_due_date - lw_pos-lotposition_org_date.
+
+        IF lw_flow_purchase-nominal_amt NE 0.
+          IF lv_days_denominator NE 0.
+            lv_posting_amt_amort  = ( ( lv_eff_ratio * lv_oci_amt ) * ( lv_days_numerator / lv_days_denominator )
+                                    * ( lw_pos-nominal_amt / lw_flow_purchase-nominal_amt ) ).    " + lv_nominal_sale )
+*                                    + ( ( lv_eff_ratio * lv_oci_amt ) * ( lv_num1 / lv_days_denominator )
+*                                     * ( lv_nominal_sale  / lw_flow_purchase-nominal_amt  ) ).
+          ENDIF.
+          CLEAR: lv_nominal_sale.
+          " If the bond matures in the current period, no amortization
+          IF lw_security_details-final_due_date <= lv_end_date.
+            lv_posting_amt_amort = 0.
+          ENDIF.
+          IF lv_sale_date >= lv_start_date AND lv_sale_date <= lv_end_date.
+*          IF lw_security_details-final_due_date >= lv_start_date AND lw_security_details-final_due_date <= lv_end_date.
+            IF lw_pos-nominal_org_amt_pc NE 0.
+              lv_posting_amt_pnl  =  ( lv_eff_ratio * lv_oci_amt )  * ( lw_pos-nominal_org_amt_pc ) / lw_flow_purchase-nominal_amt.
+            ELSE.
+              lv_posting_amt_pnl  =  ( lv_eff_ratio * lv_oci_amt )  * ( lw_flow_purchase-nominal_amt - lw_pos-nominal_amt - lv_total_sale ) / lw_flow_purchase-nominal_amt.
+            ENDIF.
+
+            " eliminating impact of previous amortizations
+            lv_posting_amt_pnl = lv_posting_amt_pnl * ( ( ( lw_security_details-final_due_date - lv_start_date_calc ) + 1 ) / lv_days_denominator ).
+          ENDIF.
+        ENDIF.
+*        lv_lot_id = lw_pos-lot_id.
+        w_amort-company_code      = lw_dift_pos-company_code.
+        w_amort-lot_id            = lw_pos-lot_id.
+        w_amort-key_date          = p_date.
+        w_amort-security_id       = lw_pos-security_id.
+        w_final-company_code      = lw_dift_pos-company_code.
+        w_final-valuation_area    = lw_dift_pos-valuation_area.
+        w_final-security_id       = lw_pos-security_id.
+        w_final-key_date          = p_date.
+        w_final-hrel              = lw_hrel-hrel_number.    "lw_dift_pos-deal_number.
+        w_final-hinst_no          = lw_hrel-hinst_deal_no.
+        w_final-lot_id            = lw_pos-lot_id.
+        w_final-amort_amt         = lv_posting_amt_amort.
+        w_final-pnl_amt           = lv_posting_amt_pnl.
+        w_final-oci_amt           = lv_posting_amt_oci.
+        w_final-ori_amt           = lw_flow_purchase-nominal_amt.
+        w_final-nom_amt           = lw_pos-nominal_amt.
+        w_final-lot_date          = lw_pos-lotposition_org_date.
+        w_final-bond_date         = lw_security_details-final_due_date.
+        w_final-eff_ratio         = lv_eff_ratio.
+
+***************************************************************************************
+* read user profile from table USR01
+
+* FIRST GET THE MONTH DATE AND YEAR COMPONENTS FROM THE DAT
+        MOVE p_date+0(4) TO lv_year.
+*  MOVE l_yearl+2(2) TO l_years.
+        MOVE p_date+4(2) TO lv_month.
+        MOVE p_date+6(2) TO lv_dat.
+
+        MOVE p_budat+0(4) TO lv_yearl.
+*  MOVE l_yearl+2(2) TO l_years.
+        MOVE p_budat+4(2) TO lv_month1.
+        MOVE p_budat+6(2) TO lv_dat1.
+
+*        lv_date = p_date+4(2) && '/' && p_date+6(2) && '/' && p_date+0(4).
+*        DATA(lv_pdate) = p_budat+4(2) && '/' && p_budat+6(2) && '/' && p_budat+0(4).
+        CASE l_datfm.                                       " date format from user profile
+          WHEN '1'.
+            CONCATENATE  lv_dat lv_month lv_year INTO lv_date SEPARATED BY '.'.
+            CONCATENATE  lv_dat1 lv_month1 lv_yearl INTO lv_pdate SEPARATED BY '.'.
+          WHEN '2'.
+            CONCATENATE lv_month lv_dat lv_year INTO lv_date SEPARATED BY '/'.
+            CONCATENATE lv_month1 lv_dat1  lv_yearl INTO lv_pdate SEPARATED BY '/'.
+          WHEN '3'.
+            CONCATENATE lv_month lv_dat lv_year INTO lv_date SEPARATED BY '-'.
+            CONCATENATE lv_month1 lv_dat1 lv_yearl INTO lv_pdate SEPARATED BY '-'.
+          WHEN '4'.
+            CONCATENATE lv_year lv_month lv_dat INTO lv_date SEPARATED BY '.'.
+            CONCATENATE lv_yearl lv_month1 lv_dat1  INTO lv_pdate SEPARATED BY '.'.
+          WHEN '5' .
+            CONCATENATE lv_year lv_month lv_dat INTO lv_date SEPARATED BY '/'.
+            CONCATENATE lv_yearl lv_month1 lv_dat1  INTO lv_pdate SEPARATED BY '/'.
+          WHEN '6'.
+            CONCATENATE lv_year lv_month lv_dat INTO lv_date SEPARATED BY '-'.
+            CONCATENATE lv_yearl lv_month1 lv_dat1  INTO lv_pdate SEPARATED BY '-'.
+          WHEN OTHERS.
+        ENDCASE.
+
+************************************************************************************************
+* POSTING HEDGE RESERVE TO AMORTIZE IF APPLICABLE
+
+        IF p_test NE abap_true.
+          IF lv_posting_amt_amort IS NOT INITIAL.
+            READ TABLE li_amort INTO DATA(lw_amort) WITH KEY company_code   = p_bukrs
+                                                             lot_id         = lw_pos-lot_id
+                                                             post_type      = 'AMORT'.
+
+            IF ( sy-subrc NE 0 ) OR ( sy-subrc = 0 AND lw_amort-key_date LT p_date
+                                                   AND lw_amort-key_date+4(2) = lv_lastdate+4(2) )."   added to check the posting is done
+              " in previous month or not.
+              IF lv_posting_amt_amort > 0.
+                lv_utype_amort = 'ZVHEDAD+'.
+              ELSE.
+                lv_utype_amort = 'ZVHEDAD-'.
+              ENDIF.
+
+              REFRESH: i_bdcdata,li_msg.
+              PERFORM bdc_dynpro      USING 'SAPMF64Z' '0100'.
+              PERFORM bdc_field       USING 'BDC_CURSOR'
+                                            'RMF64Z_100-BUKRS'.
+              PERFORM bdc_field       USING 'BDC_OKCODE'
+                                            '/00'.
+              PERFORM bdc_field       USING 'RMF64Z_100-BUKRS'
+                                            p_bukrs.
+              PERFORM bdc_field       USING 'RMF64Z_100-RANL'
+                                            lw_pos-security_id.
+              PERFORM bdc_field       USING 'RMF64Z_100-RLDEPO'
+                                             lw_pos-security_account.
+              PERFORM bdc_dynpro      USING 'SAPLFWBU' '0100'.
+              PERFORM bdc_field       USING 'BDC_CURSOR'
+                                            'LOT_ID'.
+              PERFORM bdc_field       USING 'BDC_OKCODE'
+                                            '=INSE'.
+              PERFORM bdc_field       USING 'FWBU_0100-DVALUT'
+                                            lv_date.
+              PERFORM bdc_field       USING 'FWBU_0100-BUDAT'
+                                            lv_pdate.     "lv_date.
+              PERFORM bdc_field       USING 'FWBU_0100-DFAELL'
+                                            lv_date.
+              PERFORM bdc_field       USING 'FWBU_0100-DDISPO'
+                                            lv_date.
+              PERFORM bdc_field       USING 'FWBU_0100-DBESTAND'
+                                            lv_date.
+              PERFORM bdc_field       USING 'FWBU_0100-XZUSATZ'
+                                            lv_assignment.
+              PERFORM bdc_field       USING 'LOT_ID'
+                                             lv_lot_id.   " lw_pos-lot_id.
+              EXPORT com_val_cls = lw_vtbfha-rcomvalcl TO MEMORY ID 'TR_MANUAL_POSTING_VAL_CLASS'.
+              EXPORT portfolio = lw_pos-portfolio TO MEMORY ID 'TR_MANUAL_POSTING_PORTFOLIO'.
+
+              PERFORM bdc_dynpro      USING 'SAPLFWBU' '0200'.
+              PERFORM bdc_field       USING 'BDC_CURSOR'
+                                            'FWBU_0200-BCWHR'.
+              PERFORM bdc_field       USING 'BDC_OKCODE'
+                                            '=UEB'.
+              PERFORM bdc_field       USING 'FWBU_0200-DIS_FLOWTYPE'
+                                            lv_utype_amort.
+              PERFORM bdc_field       USING 'FWBU_0200-BCWHR'
+                                            lv_posting_amt_amort.
+
+              PERFORM bdc_dynpro      USING 'SAPLFWBU' '0100'.
+              PERFORM bdc_field       USING 'BDC_CURSOR'
+                                            'LOT_ID'.
+              PERFORM bdc_field       USING 'BDC_OKCODE'
+                                            '=POST'.
+              PERFORM bdc_field       USING 'FWBU_0100-DVALUT'
+                                            lv_date.
+              PERFORM bdc_field       USING 'FWBU_0100-BUDAT'
+                                            lv_pdate.     "lv_date.
+              PERFORM bdc_field       USING 'FWBU_0100-DFAELL'
+                                            lv_date.
+              PERFORM bdc_field       USING 'FWBU_0100-DDISPO'
+                                            lv_date.
+              PERFORM bdc_field       USING 'FWBU_0100-DBESTAND'
+                                            lv_date.
+              PERFORM bdc_field       USING 'FWBU_0100-XZUSATZ'
+                                            lv_assignment.
+              PERFORM bdc_field       USING 'LOT_ID'
+                                             lv_lot_id.  "lw_pos-lot_id.
+
+              CALL TRANSACTION 'FWBS' USING i_bdcdata MODE 'N'
+                     UPDATE 'A' MESSAGES INTO li_msg.
+              COMMIT WORK.
+              WAIT UP TO 2 SECONDS.
+              IF li_msg IS INITIAL.
+                lv_flag = abap_true.
+                w_amort-post_type = 'AMORT'.
+                INSERT ztr_amort FROM w_amort.
+              ELSE.
+                " fill protocol handler
+                LOOP AT li_msg INTO ls_msg.
+                  lv_msgno = ls_msg-msgnr.
+                  lv_msgv1 = ls_msg-msgv1.
+                  lv_msgv2 = ls_msg-msgv2.
+                  lv_msgv3 = ls_msg-msgv3.
+                  lv_msgv4 = ls_msg-msgv4.
+                  CALL METHOD lo_protocol->add_message
+                    EXPORTING
+                      im_msgty  = ls_msg-msgtyp
+                      im_msgid  = ls_msg-msgid
+                      im_msgno  = lv_msgno
+                      im_msgv1  = lv_msgv1
+                      im_msgv2  = lv_msgv2
+                      im_msgv3  = lv_msgv3
+                      im_msgv4  = lv_msgv4
+                      im_source = 'THX'.
+                ENDLOOP.
+              ENDIF.
+            ELSEIF  sy-subrc = 0 AND lw_amort-key_date LT lv_lastdate
+                  AND lw_amort-key_date+4(2) NE lv_lastdate+4(2). " check posting for the previous month
+              lv_msgid = 'ZFTR0'.
+              lv_msgno = '552'.
+              lv_msgv1 = TEXT-047.
+              lv_msgv2 = lv_lastdate.
+              CALL METHOD lo_protocol->add_message
+                EXPORTING
+                  im_msgty  = 'E'
+                  im_msgid  = lv_msgid
+                  im_msgno  = lv_msgno
+                  im_msgv1  = lv_msgv1
+                  im_msgv2  = lv_msgv2
+                  im_source = 'THX'.
+*            ELSEIF sy-subrc = 0 AND lw_amort-key_date+4(2) EQ p_date+4(2). " if posting is already done in current month
+            ELSEIF sy-subrc = 0 AND lw_amort-key_date EQ p_date. " if posting is already done in current month
+              lv_msgid = 'ZFTR0'.
+              lv_msgno = '551'.
+              lv_msgv1 = TEXT-047.
+              lv_msgv2 = p_date.
+              CALL METHOD lo_protocol->add_message
+                EXPORTING
+                  im_msgty  = 'E'
+                  im_msgid  = lv_msgid
+                  im_msgno  = lv_msgno
+                  im_msgv1  = lv_msgv1
+                  im_msgv2  = lv_msgv2
+                  im_source = 'THX'.
+            ENDIF.
+          ENDIF.
+*******************************************************************************
+* POSTING HEDGE RESERVE TO PNL if applicable
+
+          IF lv_posting_amt_pnl IS NOT INITIAL.
+            READ TABLE li_amort INTO lw_amort WITH KEY company_code   = p_bukrs
+                                                       lot_id         = lw_pos-lot_id
+                                                       post_type      = 'PNL'.
+*            IF ( sy-subrc NE 0 ) OR ( sy-subrc = 0 AND lw_amort-key_date LT p_date ).
+            IF ( sy-subrc NE 0 ) OR ( sy-subrc = 0 AND lw_amort-key_date LT p_date
+                                                   AND lw_amort-key_date+4(2) = lv_lastdate+4(2) )."   added to check the posting is done
+              IF lv_posting_amt_pnl > 0.
+                lv_utype_pnl = 'ZVHEDPL+'.
+              ELSE.
+                lv_utype_pnl = 'ZVHEDPL-'.
+              ENDIF.
+
+              REFRESH: i_bdcdata,li_msg.
+              PERFORM bdc_dynpro      USING 'SAPMF64Z' '0100'.
+              PERFORM bdc_field       USING 'BDC_CURSOR'
+                                            'RMF64Z_100-BUKRS'.
+              PERFORM bdc_field       USING 'BDC_OKCODE'
+                                            '/00'.
+              PERFORM bdc_field       USING 'RMF64Z_100-BUKRS'
+                                            p_bukrs.
+              PERFORM bdc_field       USING 'RMF64Z_100-RANL'
+                                            lw_pos-security_id.
+              PERFORM bdc_field       USING 'RMF64Z_100-RLDEPO'
+                                             lw_pos-security_account.
+
+              PERFORM bdc_dynpro      USING 'SAPLFWBU' '0100'.
+              PERFORM bdc_field       USING 'BDC_CURSOR'
+                                            'LOT_ID'.
+              PERFORM bdc_field       USING 'BDC_OKCODE'
+                                            '=INSE'.
+              PERFORM bdc_field       USING 'FWBU_0100-DVALUT'
+                                            lv_date.
+              PERFORM bdc_field       USING 'FWBU_0100-BUDAT'
+                                            lv_pdate.     "lv_date.
+              PERFORM bdc_field       USING 'FWBU_0100-DFAELL'
+                                            lv_date.
+              PERFORM bdc_field       USING 'FWBU_0100-DDISPO'
+                                            lv_date.
+              PERFORM bdc_field       USING 'FWBU_0100-DBESTAND'
+                                            lv_date.
+              PERFORM bdc_field       USING 'FWBU_0100-XZUSATZ'
+                                            lv_assignment.
+              PERFORM bdc_field       USING 'LOT_ID'
+                                             lv_lot_id.      "lw_pos-lot_id.
+              EXPORT com_val_cls = lw_vtbfha-rcomvalcl TO MEMORY ID 'TR_MANUAL_POSTING_VAL_CLASS'.
+              EXPORT portfolio = lw_pos-portfolio TO MEMORY ID 'TR_MANUAL_POSTING_PORTFOLIO'.
+
+              PERFORM bdc_dynpro      USING 'SAPLFWBU' '0200'.
+              PERFORM bdc_field       USING 'BDC_CURSOR'
+                                            'FWBU_0200-BCWHR'.
+              PERFORM bdc_field       USING 'BDC_OKCODE'
+                                            '=UEB'.
+              PERFORM bdc_field       USING 'FWBU_0200-DIS_FLOWTYPE'
+                                            lv_utype_pnl.
+              PERFORM bdc_field       USING 'FWBU_0200-BCWHR'
+                                            lv_posting_amt_pnl.
+
+              PERFORM bdc_dynpro      USING 'SAPLFWBU' '0100'.
+              PERFORM bdc_field       USING 'BDC_CURSOR'
+                                            'LOT_ID'.
+              PERFORM bdc_field       USING 'BDC_OKCODE'
+                                            '=POST'.
+              PERFORM bdc_field       USING 'FWBU_0100-DVALUT'
+                                            lv_date.
+              PERFORM bdc_field       USING 'FWBU_0100-BUDAT'
+                                            lv_pdate.     "lv_date.
+              PERFORM bdc_field       USING 'FWBU_0100-DFAELL'
+                                            lv_date.
+              PERFORM bdc_field       USING 'FWBU_0100-DDISPO'
+                                            lv_date.
+              PERFORM bdc_field       USING 'FWBU_0100-DBESTAND'
+                                            lv_date.
+              PERFORM bdc_field       USING 'FWBU_0100-XZUSATZ'
+                                            lv_assignment.
+              PERFORM bdc_field       USING 'LOT_ID'
+                                             lv_lot_id.     "lw_pos-lot_id.
+
+              CALL TRANSACTION 'FWBS' USING i_bdcdata MODE 'N'
+                     UPDATE 'A' MESSAGES INTO li_msg.
+              COMMIT WORK.
+              WAIT UP TO 2 SECONDS.
+              IF li_msg IS INITIAL.
+                lv_flag1 = abap_true.
+                w_amort-post_type = 'PNL'.
+                INSERT ztr_amort FROM w_amort.
+              ELSE.
+                " fill protocol handler
+                LOOP AT li_msg INTO ls_msg.
+                  lv_msgno = ls_msg-msgnr.
+                  lv_msgv1 = ls_msg-msgv1.
+                  lv_msgv2 = ls_msg-msgv2.
+                  lv_msgv3 = ls_msg-msgv3.
+                  lv_msgv4 = ls_msg-msgv4.
+                  CALL METHOD lo_protocol->add_message
+                    EXPORTING
+                      im_msgty  = ls_msg-msgtyp
+                      im_msgid  = ls_msg-msgid
+                      im_msgno  = lv_msgno
+                      im_msgv1  = lv_msgv1
+                      im_msgv2  = lv_msgv2
+                      im_msgv3  = lv_msgv3
+                      im_msgv4  = lv_msgv4
+                      im_source = 'THX'.
+                ENDLOOP.
+              ENDIF.
+            ELSEIF  sy-subrc = 0 AND lw_amort-key_date LT lv_lastdate
+                  AND lw_amort-key_date+4(2) NE lv_lastdate+4(2). " check posting for the previous month
+              lv_msgid = 'ZFTR0'.
+              lv_msgno = '552'.
+              lv_msgv1 = TEXT-049.
+              lv_msgv2 = lv_lastdate.
+              CALL METHOD lo_protocol->add_message
+                EXPORTING
+                  im_msgty  = 'E'
+                  im_msgid  = lv_msgid
+                  im_msgno  = lv_msgno
+                  im_msgv1  = lv_msgv1
+                  im_msgv2  = lv_msgv2
+                  im_source = 'THX'.
+            ELSEIF sy-subrc = 0 AND lw_amort-key_date EQ p_date. " if posting is already done in current month
+*            ELSEIF sy-subrc = 0 AND lw_amort-key_date+4(2) EQ p_date+4(2). " if posting is already done in current month
+*             else.
+              lv_msgid = 'ZFTR0'.
+              lv_msgno = '551'.
+              lv_msgv1 = TEXT-049.
+              lv_msgv2 = p_date.
+              CALL METHOD lo_protocol->add_message
+                EXPORTING
+                  im_msgty  = 'E'
+                  im_msgid  = lv_msgid
+                  im_msgno  = lv_msgno
+                  im_msgv1  = lv_msgv1
+                  im_msgv2  = lv_msgv2
+                  im_source = 'THX'.
+            ENDIF.
+          ENDIF.
+
+          IF lv_posting_amt_oci IS NOT INITIAL.
+            READ TABLE li_amort INTO lw_amort WITH KEY company_code   = p_bukrs
+                                                       lot_id         = lw_pos-lot_id
+                                                       post_type      = 'OCI'.
+*            IF ( sy-subrc NE 0 ) OR ( sy-subrc = 0 AND lw_amort-key_date LT p_date ).
+            IF ( sy-subrc NE 0 ) OR ( sy-subrc = 0 AND lw_amort-key_date LT p_date
+                                                   AND lw_amort-key_date+4(2) = lv_lastdate+4(2) )."   added to check the posting is done
+              IF lv_posting_amt_oci > 0.
+                lv_utype_oci = 'ZVHEDOC+'.
+              ELSE.
+                lv_utype_oci = 'ZVHEDOC-'.
+              ENDIF.
+*
+              REFRESH: i_bdcdata,li_msg.
+              PERFORM bdc_dynpro      USING 'SAPMF64Z' '0100'.
+              PERFORM bdc_field       USING 'BDC_CURSOR'
+                                            'RMF64Z_100-BUKRS'.
+              PERFORM bdc_field       USING 'BDC_OKCODE'
+                                            '/00'.
+              PERFORM bdc_field       USING 'RMF64Z_100-BUKRS'
+                                            p_bukrs.
+              PERFORM bdc_field       USING 'RMF64Z_100-RANL'
+                                            lw_pos-security_id.
+              PERFORM bdc_field       USING 'RMF64Z_100-RLDEPO'
+                                             lw_pos-security_account.
+
+              PERFORM bdc_dynpro      USING 'SAPLFWBU' '0100'.
+              PERFORM bdc_field       USING 'BDC_CURSOR'
+                                            'LOT_ID'.
+              PERFORM bdc_field       USING 'BDC_OKCODE'
+                                            '=INSE'.
+              PERFORM bdc_field       USING 'FWBU_0100-DVALUT'
+                                            lv_date.
+              PERFORM bdc_field       USING 'FWBU_0100-BUDAT'
+                                            lv_pdate.
+              PERFORM bdc_field       USING 'FWBU_0100-DFAELL'
+                                            lv_date.
+              PERFORM bdc_field       USING 'FWBU_0100-DDISPO'
+                                            lv_date.
+              PERFORM bdc_field       USING 'FWBU_0100-DBESTAND'
+                                            lv_date.
+
+              PERFORM bdc_field       USING 'FWBU_0100-XZUSATZ'
+                                            lv_assignment.
+              PERFORM bdc_field       USING 'LOT_ID'
+                                            lv_lot_id.     "lw_pos-lot_id.
+              EXPORT com_val_cls = lw_vtbfha-rcomvalcl TO MEMORY ID 'TR_MANUAL_POSTING_VAL_CLASS'.
+              EXPORT portfolio = lw_pos-portfolio TO MEMORY ID 'TR_MANUAL_POSTING_PORTFOLIO'.
+
+              PERFORM bdc_dynpro      USING 'SAPLFWBU' '0200'.
+              PERFORM bdc_field       USING 'BDC_CURSOR'
+                                            'FWBU_0200-BCWHR'.
+              PERFORM bdc_field       USING 'BDC_OKCODE'
+                                            '=UEB'.
+              PERFORM bdc_field       USING 'FWBU_0200-DIS_FLOWTYPE'
+                                            lv_utype_oci.
+              PERFORM bdc_field       USING 'FWBU_0200-BCWHR'
+                                            lv_posting_amt_oci.
+
+              PERFORM bdc_dynpro      USING 'SAPLFWBU' '0100'.
+              PERFORM bdc_field       USING 'BDC_CURSOR'
+                                            'LOT_ID'.
+              PERFORM bdc_field       USING 'BDC_OKCODE'
+                                            '=POST'.
+              PERFORM bdc_field       USING 'FWBU_0100-DVALUT'
+                                            lv_date.
+              PERFORM bdc_field       USING 'FWBU_0100-BUDAT'
+                                            lv_pdate.
+              PERFORM bdc_field       USING 'FWBU_0100-DFAELL'
+                                            lv_date.
+              PERFORM bdc_field       USING 'FWBU_0100-DDISPO'
+                                            lv_date.
+              PERFORM bdc_field       USING 'FWBU_0100-DBESTAND'
+                                            lv_date.
+
+              PERFORM bdc_field       USING 'FWBU_0100-XZUSATZ'
+                                            lv_assignment.
+              PERFORM bdc_field       USING 'LOT_ID'
+                                            lv_lot_id.     "lw_pos-lot_id.
+
+
+              CALL TRANSACTION 'FWBS' USING i_bdcdata MODE 'N'
+                     UPDATE 'A' MESSAGES INTO li_msg.
+              COMMIT WORK.
+              WAIT UP TO 2 SECONDS.
+              IF li_msg IS INITIAL.
+                lv_flag2 = abap_true.
+                w_amort-post_type = 'OCI'.
+                INSERT ztr_amort FROM w_amort.
+              ELSE.
+                " fill protocol handler
+                LOOP AT li_msg INTO ls_msg.
+                  lv_msgno = ls_msg-msgnr.
+                  lv_msgv1 = ls_msg-msgv1.
+                  lv_msgv2 = ls_msg-msgv2.
+                  lv_msgv3 = ls_msg-msgv3.
+                  lv_msgv4 = ls_msg-msgv4.
+                  CALL METHOD lo_protocol->add_message
+                    EXPORTING
+                      im_msgty  = ls_msg-msgtyp
+                      im_msgid  = ls_msg-msgid
+                      im_msgno  = lv_msgno
+                      im_msgv1  = lv_msgv1
+                      im_msgv2  = lv_msgv2
+                      im_msgv3  = lv_msgv3
+                      im_msgv4  = lv_msgv4
+                      im_source = 'THX'.
+                ENDLOOP.
+              ENDIF.
+            ELSEIF  sy-subrc = 0 AND lw_amort-key_date LT lv_lastdate
+                  AND lw_amort-key_date+4(2) NE lv_lastdate+4(2). " check posting for the previous month
+              lv_msgid = 'ZFTR0'.
+              lv_msgno = '552'.
+              lv_msgv1 = TEXT-048.
+              lv_msgv2 = lv_lastdate.
+              CALL METHOD lo_protocol->add_message
+                EXPORTING
+                  im_msgty  = 'E'
+                  im_msgid  = lv_msgid
+                  im_msgno  = lv_msgno
+                  im_msgv1  = lv_msgv1
+                  im_msgv2  = lv_msgv2
+                  im_source = 'THX'.
+*            ELSEIF sy-subrc = 0 AND lw_amort-key_date+4(2) EQ p_date+4(2). " if posting is already done in current month
+            ELSEIF sy-subrc = 0 AND lw_amort-key_date EQ p_date. " if posting is already done in current month
+*            ELSE.
+              lv_msgid = 'ZFTR0'.
+              lv_msgno = '551'.
+              lv_msgv1 = TEXT-048.
+              lv_msgv2 = p_date.
+              CALL METHOD lo_protocol->add_message
+                EXPORTING
+                  im_msgty  = 'E'
+                  im_msgid  = lv_msgid
+                  im_msgno  = lv_msgno
+                  im_msgv1  = lv_msgv1
+                  im_msgv2  = lv_msgv2
+                  im_source = 'THX'.
+            ENDIF.
+          ENDIF.
+
+          FREE: MEMORY ID 'TR_MANUAL_POSTING_VAL_CLASS',
+                MEMORY ID 'TR_MANUAL_POSTING_PORTFOLIO'.
+
+          IF lv_posting_amt_amort IS INITIAL AND lv_posting_amt_pnl IS INITIAL AND lv_posting_amt_oci IS INITIAL.
+            w_final-mess_amrt = 1.
+            w_final-message = TEXT-003.
+          ELSEIF lv_posting_amt_amort IS INITIAL AND lv_posting_amt_pnl IS NOT INITIAL
+                   AND lv_posting_amt_oci IS INITIAL.
+            IF lv_flag1 = abap_true.
+              w_final-mess_amrt = 3.
+              w_final-message = TEXT-004.
+            ELSE.
+              w_final-mess_amrt = 1.
+              w_final-message = TEXT-005.
+            ENDIF.
+          ELSEIF lv_posting_amt_amort IS NOT INITIAL AND lv_posting_amt_pnl IS INITIAL
+                                 AND lv_posting_amt_oci IS INITIAL.
+            IF lv_flag = abap_true.
+              w_final-mess_amrt = 3.
+              w_final-message = TEXT-006.
+            ELSE.
+              w_final-mess_amrt = 1.
+              w_final-message = TEXT-007.
+            ENDIF.
+          ELSEIF lv_posting_amt_oci IS NOT INITIAL AND lv_posting_amt_pnl IS INITIAL
+                                 AND lv_posting_amt_amort IS INITIAL.
+            IF lv_flag2 = abap_true.
+              w_final-mess_amrt = 3.
+              w_final-message = TEXT-032.
+            ELSE.
+              w_final-mess_amrt = 1.
+              w_final-message = TEXT-033.
+            ENDIF.
+
+          ELSEIF lv_posting_amt_oci IS NOT INITIAL AND lv_posting_amt_pnl IS NOT INITIAL
+                                AND lv_posting_amt_amort IS INITIAL.
+
+            IF lv_flag2 = abap_true AND lv_flag1 = abap_true.
+              w_final-mess_amrt = 3.
+              w_final-message = TEXT-034.
+            ELSEIF lv_flag2 = abap_true AND lv_flag1 = ' '.
+              w_final-mess_amrt = 1.
+              w_final-message = TEXT-035.
+            ELSEIF lv_flag2 = ' ' AND lv_flag1 = abap_true.
+              w_final-mess_amrt = 1.
+              w_final-message = TEXT-036.
+            ELSEIF lv_flag2 = abap_true AND lv_flag1 = abap_true.
+              w_final-mess_amrt = 1.
+              w_final-message = TEXT-037.
+            ENDIF.
+          ELSEIF lv_posting_amt_oci IS INITIAL AND lv_posting_amt_pnl IS NOT INITIAL
+                               AND lv_posting_amt_amort IS NOT INITIAL.
+
+            IF lv_flag = abap_true AND lv_flag1 = abap_true.
+              w_final-mess_amrt = 3.
+              w_final-message = TEXT-038.
+            ELSEIF lv_flag = abap_true AND lv_flag1 = ' '.
+              w_final-mess_amrt = 1.
+              w_final-message = TEXT-039.
+            ELSEIF lv_flag = ' ' AND lv_flag1 = abap_true.
+              w_final-mess_amrt = 1.
+              w_final-message = TEXT-040.
+            ELSEIF lv_flag = ' ' AND lv_flag1 = ' '.
+              w_final-mess_amrt = 1.
+              w_final-message = TEXT-041.
+            ENDIF.
+          ELSEIF lv_posting_amt_oci IS NOT INITIAL AND lv_posting_amt_amort IS NOT INITIAL
+                               AND lv_posting_amt_pnl IS INITIAL.
+
+            IF lv_flag2 = abap_true AND lv_flag = abap_true.
+              w_final-mess_amrt = 3.
+              w_final-message = TEXT-042.
+            ELSEIF lv_flag2 = abap_true AND lv_flag = ' '.
+              w_final-mess_amrt = 1.
+              w_final-message = TEXT-043.
+            ELSEIF lv_flag2 = ' ' AND lv_flag = abap_true.
+              w_final-mess_amrt = 1.
+              w_final-message = TEXT-044.
+            ELSEIF lv_flag2 = ' ' AND lv_flag = ' '.
+              w_final-mess_amrt = 1.
+              w_final-message = TEXT-045.
+            ENDIF.
+
+          ELSEIF lv_posting_amt_amort IS NOT INITIAL AND lv_posting_amt_pnl IS NOT INITIAL AND lv_posting_amt_oci IS NOT INITIAL.
+            IF lv_flag = abap_true AND lv_flag1 = ' ' AND lv_flag2 = ' '.
+              w_final-mess_amrt = 1.
+              w_final-message = TEXT-008.
+            ELSEIF lv_flag1 = abap_true AND lv_flag = ' ' AND lv_flag2 = ' '.
+              w_final-mess_amrt = 1.
+              w_final-message = TEXT-009.
+            ELSEIF lv_flag2 = abap_true AND lv_flag = ' ' AND lv_flag1 = ' '.
+              w_final-mess_amrt = 1.
+              w_final-message = TEXT-028.
+            ELSEIF lv_flag1 = abap_true AND lv_flag = abap_true AND lv_flag2 = abap_true.
+              w_final-mess_amrt = 3.
+              w_final-message = TEXT-010.
+            ELSEIF lv_flag1 = abap_true AND lv_flag = abap_true AND lv_flag2 = ' '.
+              w_final-mess_amrt = 1.
+              w_final-message = TEXT-029.
+            ELSEIF lv_flag1 = abap_true AND lv_flag2 = abap_true AND lv_flag = ' '.
+              w_final-mess_amrt = 1.
+              w_final-message = TEXT-030.
+            ELSEIF lv_flag = abap_true AND lv_flag2 = abap_true AND lv_flag1 = ' '.
+              w_final-mess_amrt = 1.
+              w_final-message = TEXT-031.
+            ENDIF.
+          ENDIF.
+*         endif.
+        ELSE.
+          w_final-message = TEXT-011.
+        ENDIF.
+
+        APPEND w_final TO i_final.
+        CLEAR:w_final.
+      ENDIF.
+    ENDIF.
+  ENDLOOP.
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*&      Form  F_FIELDCATALOG
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM f_fieldcatalog .
+
+  w_layout-zebra = c_chk.
+  IF p_test NE abap_true.
+    w_layout-lights_fieldname = 'MESS_AMRT'.
+  ENDIF.
+
+  PERFORM fill_cat USING : 'COMPANY_CODE'    'I_FINAL' '4' TEXT-012,
+                         'VALUATION_AREA'  'I_FINAL' '4' TEXT-013,
+                         'SECURITY_ID'     'I_FINAL' '15' TEXT-014,
+                         'KEY_DATE'        'I_FINAL' '10' TEXT-015,
+                         'HREL'             'I_FINAL' '10' TEXT-016,
+                         'HINST_NO'         'I_FINAL' '10' TEXT-046,
+                         'LOT_ID'          'I_FINAL' '20' TEXT-017,
+                         'OCI_AMT'         'I_FINAL' '15' TEXT-018 ,
+                         'AMORT_AMT'        'I_FINAL' '15' TEXT-019,
+                         'PNL_AMT'         'I_FINAL' '15' TEXT-020 ,
+                         'ORI_AMT'         'I_FINAL' '15' TEXT-021,
+                         'NOM_AMT'         'I_FINAL' '15' TEXT-022,
+                         'LOT_DATE'        'I_FINAL' '10' TEXT-023,
+                         'BOND_DATE'       'I_FINAL' '10' TEXT-024,
+                         'EFF_RATIO'      'I_FINAL' '12' TEXT-025,
+                         'MESSAGE'   'I_FINAL' '50' TEXT-026.
+  IF p_test NE abap_true.
+    PERFORM fill_cat USING: 'MESS_AMRT'   'I_FINAL' '15' TEXT-027.
+  ENDIF.
+
+ENDFORM.
+FORM fill_cat  USING    VALUE(p_fname)
+                        VALUE(p_tabname)
+                        VALUE(p_len)
+                        VALUE(p_text).
+
+  w_fieldcat-fieldname = p_fname.
+  w_fieldcat-tabname = p_tabname.
+  w_fieldcat-outputlen = p_len.
+  w_fieldcat-seltext_m = p_text.
+
+
+  APPEND w_fieldcat TO i_fieldcat.
+  CLEAR:w_fieldcat.
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*&      Form  F_DISPLAY
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM f_display .
+
+  CALL METHOD lo_protocol->display_all_messages
+*   EXPORTING
+*     im_all                      =
+*     im_extnumber                =
+*     im_process_mode             = 'D'
+*     im_display_profile          =
+*     im_only_errors_and_warnings = SPACE
+*     im_with_duplicates          = SPACE
+    EXCEPTIONS
+      log_not_found = 1
+      failed        = 2
+      OTHERS        = 3.
+  IF sy-subrc <> 0.
+*  Implement suitable error handling here
+  ENDIF.
+
+  CALL FUNCTION 'REUSE_ALV_GRID_DISPLAY'
+    EXPORTING
+      i_callback_program = sy-repid
+      is_layout          = w_layout
+      it_fieldcat        = i_fieldcat
+*     I_DEFAULT          = 'X'
+*     I_SAVE             = ' '
+    TABLES
+      t_outtab           = i_final
+    EXCEPTIONS
+      program_error      = 1
+      OTHERS             = 2.
+  IF sy-subrc <> 0.
+* Implement suitable error handling here
+  ENDIF.
+
+  IF sy-subrc = 1.
+  ELSEIF sy-subrc = 2.
+  ENDIF.
+
+ENDFORM.
+FORM bdc_dynpro USING program dynpro.
+
+  CLEAR i_bdcdata.
+  i_bdcdata-program = program.
+  i_bdcdata-dynpro = dynpro.
+  i_bdcdata-dynbegin = 'X'.
+  APPEND i_bdcdata.
+
+ENDFORM.
+FORM bdc_field USING fnam fval.
+
+  IF fval <> space.
+    CLEAR i_bdcdata.
+    i_bdcdata-fnam = fnam.
+    i_bdcdata-fval = fval.
+    SHIFT i_bdcdata-fval LEFT DELETING LEADING space.
+    APPEND i_bdcdata.
+  ENDIF.
+
+ENDFORM.

@@ -1,0 +1,1077 @@
+*&---------------------------------------------------------------------*
+*& Report ZTRI0100
+*&---------------------------------------------------------------------*
+*&
+*&---------------------------------------------------------------------*
+*=======================================================================
+* Program          :  ZTRI0100
+* Created by       :  Ravi Teja Katragadda
+* Search on        :
+* Date             :  28 May 2019
+* Business Analyst :  Pankaj Jain
+* Project          :  Hedge Accounting Automation
+* PIR/PCR          :  PCR 9000020083
+* Description      :  Upload Effectiveness Test Results
+*=======================================================================
+*&---------------------------------------------------------------------*
+*                         MODIFICATION HISTORY
+*&---------------------------------------------------------------------*
+* Changed by       :
+* Search on        :
+* Date             :
+* Business Analyst :
+* Project          :
+* PIR/PCR          :
+* Description      :
+*&---------------------------------------------------------------------*
+REPORT ztri0100 NO STANDARD PAGE HEADING.
+
+TABLES:thxt_hrel,thxet_meas_effrt, t001.
+TYPE-POOLS: truxs.
+
+TYPES: BEGIN OF t_hedge,
+         company_code TYPE bukrs,
+         hrel_number  TYPE thxt_hrel-hrel_number,
+       END OF t_hedge,
+
+       BEGIN OF t_excel,
+         name            TYPE zzhedge,
+         desc            TYPE string,
+         excl_chg        TYPE string,
+         exp_prin        TYPE string,
+         period_chg      TYPE string,
+         cum_chg         TYPE string,
+         hed_exl_chg     TYPE string,
+         hed_print       TYPE string,
+         hed_prd_chg     TYPE string,
+         hed_cum_chg     TYPE string,
+         pe_prd          TYPE string,
+         pe_ltd          TYPE string,
+         rel_prd         TYPE string,
+         rel_ltd         TYPE string,
+         tot_pe_per      TYPE string,
+         tot_pe_ltd      TYPE string,
+         oci_per         TYPE string,
+         oci_ltd         TYPE string,
+         oci_rel_prd     TYPE string,
+         oci_rel_ltd     TYPE string,
+         oci_exl_prd     TYPE string,
+         oci_exl_ltd     TYPE string,
+         oci_exl_rel_prd TYPE string,
+         oci_exl_rel_ltd TYPE string,
+         tot_oci_prd     TYPE string,
+         tot_oci_ltd     TYPE string,
+         type            TYPE string,
+         hed_risk        TYPE string,
+         des_date(10),
+         dedes_date(10),
+         run_date(10),
+         rep_cur         TYPE string,
+         cus_id          TYPE string,
+         hed_cus_id      TYPE string,
+         hyp_cus_id      TYPE string,
+         bval_id         TYPE string,
+         portpolio       TYPE string,
+         notes           TYPE string,
+         r_slope         TYPE string,
+         r_ratio         TYPE string,
+         r_sq            TYPE string,
+         r_stat          TYPE string,
+         r_eff           TYPE string,
+         p_slope         TYPE string,
+         p_ratio         TYPE string,
+         p_sq            TYPE string,
+         p_stat          TYPE string,
+         p_eff           TYPE string,
+         stat            TYPE string,
+       END OF t_excel,
+
+       BEGIN OF t_file,
+         text(2000),
+       END OF t_file,
+
+       BEGIN OF t_final,
+         company_code       TYPE bukrs,
+         hrel_number        TYPE thxt_hrel-hrel_number,
+         fiscal_year        TYPE thxet_meas_head-fiscal_year,
+         description        TYPE thxt_hrel-description,
+         eff_test_type      TYPE thxet_meas_head-eff_test_type,
+         eff_test_desc(20),
+         eff_test_desc1(20),
+         eff_testdate       TYPE thxet_meas_head-eff_testdate,
+         et_ustatus         TYPE thxet_meas_head-et_ustatus,
+         et_ustatus1        TYPE thxet_meas_head-et_ustatus,
+         eff_ratio          TYPE thxet_meas_effrt-eff_ratio,
+         eff_ratio1         TYPE thxet_meas_effrt-eff_ratio,
+         eff_test_type1     TYPE thxet_meas_head-eff_test_type,
+         eff_testdate1      TYPE thxet_meas_head-eff_testdate,
+         upuser             TYPE tb_upuser,
+         dupdat             TYPE tb_dupdat,
+         flag(1),
+         message(75),
+       END OF t_final.
+
+DATA: li_hrel  TYPE STANDARD TABLE OF ztr_hrel,
+      w_hedge  TYPE t_hedge,
+
+      i_excel  TYPE STANDARD TABLE OF t_excel,
+      lw_excel TYPE t_excel,
+      i_file   TYPE STANDARD TABLE OF t_file,
+      w_file   TYPE t_file,
+
+      i_final  TYPE STANDARD TABLE OF t_final,
+      w_final  TYPE t_final.
+
+
+DATA: i_fcat TYPE lvc_t_fcat,
+      w_fcat TYPE lvc_s_fcat.
+DATA: w_layout   TYPE lvc_s_layo,
+      i_type     TYPE truxs_t_text_data,
+      v_repid    TYPE sy-repid,
+      v_sel_year TYPE bkpf-gjahr,
+      v_year(4),
+      v_flag(1).
+
+
+SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE TEXT-001.
+PARAMETERS: p_upload RADIOBUTTON GROUP gr1 DEFAULT 'X' USER-COMMAND ucomm,
+            p_enter  RADIOBUTTON GROUP gr1,
+            p_check  AS CHECKBOX  MODIF ID fi1.
+SELECTION-SCREEN END OF BLOCK b1.
+
+SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME TITLE TEXT-002.
+PARAMETERS:p_file  TYPE rlgrap-filename   MODIF ID fi1.
+
+SELECTION-SCREEN END OF BLOCK b2.
+
+SELECTION-SCREEN BEGIN OF BLOCK b3 WITH FRAME TITLE TEXT-003.
+SELECT-OPTIONS:
+    s_bukrs FOR t001-bukrs MODIF ID fi2,
+    s_code  FOR thxt_hrel-hrel_number MODIF ID fi2 MATCHCODE OBJECT ztr_hrel.
+SELECT-OPTIONS: s_date FOR thxet_meas_effrt-testperiod_end MODIF ID fi2 NO-EXTENSION NO INTERVALS.
+
+SELECTION-SCREEN END OF BLOCK b3.
+
+INITIALIZATION.
+
+INITIALIZATION.
+  s_bukrs-sign = 'I'.
+  s_bukrs-option = 'EQ'.
+  s_bukrs-low = 'HK01'.
+  APPEND s_bukrs.
+
+AT SELECTION-SCREEN OUTPUT.
+
+  LOOP AT SCREEN.
+    CASE 'X'.
+      WHEN p_enter.
+        IF screen-group1 = 'FI1'.
+          screen-invisible = 1.
+          screen-input     = 0.
+        ENDIF.
+
+      WHEN p_upload.
+        IF screen-group1 = 'FI2'.
+          screen-invisible = 1.
+          screen-input     = 0.
+        ENDIF.
+    ENDCASE.
+    MODIFY SCREEN.
+  ENDLOOP.
+
+*----------------------------------------------------------------------*
+* AT SELECTION-SCREEN ON VALUE_REQUEST                                 *
+*----------------------------------------------------------------------*
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_file.
+*  IF p_check = abap_true.
+  PERFORM f_get_local_dir_file CHANGING p_file.
+*  ELSE.
+*    PERFORM f_get_sapdir_path CHANGING p_file.
+*  ENDIF.
+
+
+AT SELECTION-SCREEN.
+
+  IF p_upload EQ abap_true AND sy-ucomm = 'ONLI'.
+    IF p_file IS NOT INITIAL .
+      IF p_check = abap_true.
+        PERFORM f_upload_files USING p_file CHANGING i_file.
+      ELSE.
+        PERFORM f_upload_app_server USING p_file.
+      ENDIF.
+    ELSE.
+      MESSAGE TEXT-022 TYPE 'E'.
+    ENDIF.
+
+  ENDIF.
+
+START-OF-SELECTION.
+  IF p_upload EQ abap_true.
+    PERFORM final_table.
+  ELSE.
+    PERFORM populate_final_table.
+
+  ENDIF.
+
+  IF ( p_upload = abap_true AND p_check = abap_true  ) OR p_enter = abap_true .
+*  if p_check ne abap_true.
+    PERFORM create_fieldcatalog.
+    PERFORM display_data.
+  ELSE.
+    PERFORM savedata.
+  ENDIF.
+*&---------------------------------------------------------------------*
+*&      Form  F_GET_LOCAL_DIR_FILE
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      <--P_P_FILE  text
+*----------------------------------------------------------------------*
+FORM f_get_local_dir_file  CHANGING p_p_file.
+
+  CALL FUNCTION 'F4_FILENAME'
+    EXPORTING
+      program_name  = syst-cprog
+      dynpro_number = syst-dynnr
+    IMPORTING
+      file_name     = p_file.
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*&      Form  POPULATE_FINAL_TABLE
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM populate_final_table.
+  CLEAR: v_flag.
+
+  IF s_date IS INITIAL.
+    s_date-sign = 'I'.
+    s_date-option = 'EQ'.
+    s_date-low = sy-datum.
+    APPEND s_date.
+  ENDIF.
+
+  SELECT *
+     FROM ztr_hrel
+     INTO CORRESPONDING FIELDS OF TABLE li_hrel
+     WHERE company_code IN s_bukrs
+       AND hrel_number  IN s_code.
+
+  SELECT * FROM ztr_et_result INTO TABLE @DATA(li_et_result)
+           FOR ALL ENTRIES IN @li_hrel
+           WHERE company_code = @li_hrel-company_code
+           AND hrel_number    = @li_hrel-hrel_number
+           AND test_date      IN @s_date.
+
+  IF li_et_result IS NOT INITIAL.
+    v_flag = abap_true.
+  ENDIF.
+
+  IF s_date IS INITIAL.
+    DATA(lv_date) = sy-datum   .
+  ELSE.
+    lv_date = s_date-low  .
+  ENDIF.
+
+  LOOP AT li_hrel INTO DATA(lw_hedge).
+
+    READ TABLE li_et_result INTO DATA(lw_result) WITH KEY  company_code = lw_hedge-company_code
+                                                           hrel_number   = lw_hedge-hrel_number
+                                                           test_date = lv_date.
+    IF sy-subrc = 0.
+      w_final-company_code  = lw_hedge-company_code.
+      w_final-hrel_number   = lw_result-hrel_number.
+      w_final-description   = lw_hedge-bbrg_hedge_id.
+*      w_final-fiscal_year   = lw_result-gjahr.
+      w_final-eff_testdate  = lw_result-test_date.
+      w_final-eff_testdate1  = lw_result-test_date.
+      w_final-eff_test_type1 = 2.
+      w_final-et_ustatus = lw_result-pet_result.
+      w_final-et_ustatus1 = lw_result-ret_result.
+      w_final-eff_test_type = 1.
+      w_final-eff_test_desc = TEXT-005.
+      w_final-eff_test_desc1 = TEXT-006.
+      w_final-eff_ratio    = lw_result-pet_ratio.
+      w_final-eff_ratio1    = lw_result-ret_ratio.
+      w_final-upuser        = lw_result-upuser.
+      w_final-dupdat        = lw_result-dupdat.
+    ELSE.
+      w_final-company_code  = lw_hedge-company_code.
+      w_final-hrel_number   = lw_hedge-hrel_number.
+      w_final-description   = lw_hedge-bbrg_hedge_id.
+      w_final-eff_testdate  = lv_date.
+      w_final-eff_testdate1  = lv_date.
+      w_final-eff_test_type1 = 2.
+      w_final-eff_test_type = 1.
+      w_final-eff_test_desc = TEXT-005.
+      w_final-eff_test_desc1 = TEXT-006.
+      w_final-eff_ratio    = ' '.
+      w_final-eff_ratio1    = ' '.
+      w_final-upuser        = lw_result-upuser.
+      w_final-dupdat        = lw_result-dupdat.
+    ENDIF.
+    APPEND w_final TO i_final.
+    CLEAR: w_final,w_hedge,lw_result.
+  ENDLOOP.
+
+  SORT i_final ASCENDING BY hrel_number.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  CREATE_FIELDCATALOG
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM create_fieldcatalog .
+
+  w_layout-no_colexpd = 'X'.
+
+  w_fcat-fieldname = 'HREL_NUMBER'.
+  w_fcat-coltext = TEXT-007.
+  w_fcat-tabname = 'I_FINAL'.
+  w_fcat-convexit = 'ALPHA'.
+  APPEND w_fcat TO i_fcat.
+  CLEAR  w_fcat.
+
+  w_fcat-fieldname = 'DESCRIPTION'.
+  w_fcat-coltext = TEXT-008.
+  w_fcat-tabname = 'I_FINAL'.
+  APPEND w_fcat TO i_fcat.
+  CLEAR  w_fcat.
+
+*  w_fcat-fieldname = 'FISCAL_YEAR'.
+*  w_fcat-coltext = TEXT-009.
+*  w_fcat-tabname = 'I_FINAL'.
+*  APPEND w_fcat TO i_fcat.
+*  CLEAR  w_fcat.
+
+  w_fcat-fieldname = 'EFF_TEST_DESC'.
+  w_fcat-coltext = TEXT-010.
+  w_fcat-tabname = 'I_FINAL'.
+  APPEND w_fcat TO i_fcat.
+  CLEAR  w_fcat.
+
+  w_fcat-fieldname = 'EFF_TESTDATE'.
+  w_fcat-coltext = TEXT-011.
+  w_fcat-tabname = 'I_FINAL'.
+  w_fcat-ref_table = 'THXT_HREL'.
+  w_fcat-ref_field = 'HREL_DES_DATE'.
+  w_fcat-domname = 'DATS'.
+  IF p_upload = abap_true.
+    w_fcat-f4availabl = abap_true.
+    w_fcat-edit    = abap_true.
+  ENDIF.
+  APPEND w_fcat TO i_fcat.
+  CLEAR  w_fcat.
+
+
+  w_fcat-fieldname = 'ET_USTATUS'.
+  w_fcat-coltext = TEXT-012.
+  w_fcat-tabname = 'I_FINAL'.
+  w_fcat-f4availabl = abap_true.
+  w_fcat-ref_table = 'THXES_DISP_MEAS_HEADER'.
+  w_fcat-ref_field = 'EFF_TEST_STATUS_ICON'.
+  w_fcat-edit    = abap_true.
+  APPEND w_fcat TO i_fcat.
+  CLEAR  w_fcat.
+
+  w_fcat-fieldname = 'EFF_RATIO'.
+  w_fcat-coltext = TEXT-013.
+  w_fcat-tabname = 'I_FINAL'.
+  w_fcat-ref_table = 'THXET_MEAS_EFFRT'.
+  w_fcat-ref_field = 'EFF_RATIO'.
+  w_fcat-edit    = abap_true.
+  APPEND w_fcat TO i_fcat.
+  CLEAR  w_fcat.
+
+  w_fcat-fieldname = 'EFF_TEST_DESC1'.
+  w_fcat-coltext = TEXT-016.
+  w_fcat-tabname = 'I_FINAL'.
+  APPEND w_fcat TO i_fcat.
+  CLEAR  w_fcat.
+
+
+  w_fcat-fieldname = 'EFF_TESTDATE1'.
+  w_fcat-coltext = TEXT-018.
+  w_fcat-tabname = 'I_FINAL'.
+  w_fcat-ref_table = 'THXT_HREL'.
+  w_fcat-ref_field = 'HREL_DES_DATE'.
+  IF p_upload = abap_true.
+    w_fcat-edit    = abap_true.
+    w_fcat-f4availabl = abap_true.
+  ENDIF.
+  APPEND w_fcat TO i_fcat.
+  CLEAR  w_fcat.
+
+
+  w_fcat-fieldname = 'ET_USTATUS1'.
+  w_fcat-coltext = TEXT-019.
+  w_fcat-tabname = 'I_FINAL'.
+  w_fcat-f4availabl = abap_true.
+  w_fcat-ref_table = 'THXES_DISP_MEAS_HEADER'.
+  w_fcat-ref_field = 'EFF_TEST_STATUS_ICON'.
+  w_fcat-edit    = abap_true.
+  APPEND w_fcat TO i_fcat.
+  CLEAR  w_fcat.
+
+  w_fcat-fieldname = 'EFF_RATIO1'.
+  w_fcat-coltext = TEXT-017.
+  w_fcat-tabname = 'I_FINAL'.
+  w_fcat-ref_table = 'THXET_MEAS_EFFRT'.
+  w_fcat-ref_field = 'EFF_RATIO'.
+  w_fcat-edit    = abap_true.
+  APPEND w_fcat TO i_fcat.
+  CLEAR  w_fcat.
+
+  w_fcat-fieldname = 'UPUSER'.
+  w_fcat-coltext = TEXT-027.
+  w_fcat-tabname = 'I_FINAL'.
+  w_fcat-ref_table = 'ZTR_ET_RESULT'.
+  w_fcat-ref_field = 'UPUSER'.
+  APPEND w_fcat TO i_fcat.
+  CLEAR  w_fcat.
+
+  w_fcat-fieldname = 'DUPDAT'.
+  w_fcat-coltext = TEXT-028.
+  w_fcat-tabname = 'I_FINAL'.
+  w_fcat-ref_table = 'ZTR_ET_RESULT'.
+  w_fcat-ref_field = 'DUPDAT'.
+  APPEND w_fcat TO i_fcat.
+  CLEAR  w_fcat.
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*&      Form  DISPLAY_DATA
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM display_data .
+
+  IF v_flag = abap_true.
+    MESSAGE TEXT-024 TYPE 'S'.
+  ENDIF.
+
+
+  CALL FUNCTION 'REUSE_ALV_GRID_DISPLAY_LVC'
+    EXPORTING
+      i_callback_program       = sy-repid
+      i_callback_user_command  = 'USER_COMMAND'
+      i_callback_pf_status_set = 'PF_STATUS'
+      it_fieldcat_lvc          = i_fcat
+*     i_save                   = 'A'
+    TABLES
+      t_outtab                 = i_final
+    EXCEPTIONS
+      program_error            = 1
+      OTHERS                   = 2.
+  IF sy-subrc EQ 1.
+
+  ELSEIF sy-subrc EQ 2.
+
+  ENDIF.
+
+ENDFORM.
+
+
+FORM user_command USING r_ucomm LIKE sy-ucomm
+                                  rs_selfield TYPE slis_selfield.
+
+  DATA:ref_grid   TYPE REF TO cl_gui_alv_grid.
+  DATA: li_result   TYPE TABLE OF ztr_et_result,
+        li_del      TYPE TABLE OF ztr_et_result,
+        lw_result   TYPE ztr_et_result,
+        lv_path     TYPE rlgrap-filename,
+        li_row      TYPE lvc_t_row,
+        li_row_id   TYPE lvc_t_roid,
+        lv_ans(1),
+        lv_count    TYPE i,
+        lv_count1   TYPE i,
+        lv_mess(70).
+
+  FIELD-SYMBOLS: <ls_final> TYPE t_final.
+
+  IF ref_grid IS INITIAL.
+    CALL FUNCTION 'GET_GLOBALS_FROM_SLVC_FULLSCR'
+      IMPORTING
+        e_grid = ref_grid.
+  ENDIF.
+
+  CASE r_ucomm.
+    WHEN '&DATA_SAVE'.
+
+      IF NOT ref_grid IS INITIAL.
+        CALL METHOD ref_grid->check_changed_data.
+      ENDIF.
+      DESCRIBE TABLE i_final LINES DATA(l_lines).
+      DATA(i_final_tmp) = i_final.
+      DELETE i_final_tmp WHERE ( et_ustatus   EQ ' '          AND eff_ratio   IS NOT INITIAL )
+                            OR ( eff_ratio    = '0.0000000'   AND et_ustatus  IS NOT INITIAL )
+                            OR ( et_ustatus1  EQ ' '          AND eff_ratio1  IS NOT INITIAL )
+                            OR ( eff_ratio1   = '0.0000000'   AND et_ustatus1 IS NOT INITIAL ).
+      DESCRIBE TABLE i_final_tmp LINES DATA(l_lines1).
+      IF l_lines NE l_lines1.
+        MESSAGE TEXT-014 TYPE 'E'.
+      ELSE.
+        REFRESH li_result.
+        CLEAR: lv_count,lv_count1,lv_mess.
+
+        LOOP AT i_final INTO DATA(lw_final) WHERE flag = abap_true.
+          lw_result-company_code  = lw_final-company_code.
+          lw_result-hrel_number   = lw_final-hrel_number.
+          lw_result-test_date     = lw_final-eff_testdate.
+          lv_count1 = lv_count1 + 1.
+          APPEND lw_result TO li_del.
+          CLEAR: lw_result,lw_final.
+          DELETE i_final.
+          CONTINUE.
+        ENDLOOP.
+
+        IF li_del IS NOT INITIAL.
+          DELETE ztr_et_result FROM TABLE li_del.
+          COMMIT WORK.
+          REFRESH li_del.
+        ENDIF.
+
+        LOOP AT i_final INTO lw_final WHERE
+          ( et_ustatus IS NOT INITIAL OR et_ustatus1 IS NOT INITIAL ).
+          CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+            EXPORTING
+              input  = lw_final-hrel_number
+            IMPORTING
+              output = lw_final-hrel_number.
+          lw_result-company_code  = lw_final-company_code.
+          lw_result-hrel_number   = lw_final-hrel_number.
+          lw_result-test_date     = lw_final-eff_testdate.
+          lw_result-description   = lw_final-description.
+
+          IF lw_final-et_ustatus IS NOT INITIAL AND lw_final-eff_ratio NE '0.0000000'.
+            lw_result-pet_result    = lw_final-et_ustatus.
+            lw_result-pet_ratio     = lw_final-eff_ratio.
+          ENDIF.
+
+          IF lw_final-et_ustatus1 IS NOT INITIAL AND lw_final-eff_ratio1 NE '0.0000000'.
+            lw_result-ret_result    = lw_final-et_ustatus1.
+            lw_result-ret_ratio     = lw_final-eff_ratio1.
+          ENDIF.
+
+          lw_result-upuser        = sy-uname.
+          lw_result-dupdat        = sy-datum.
+
+          lv_count = lv_count + 1.
+          APPEND lw_result TO li_result.
+          CLEAR: lw_final,lw_result.
+
+        ENDLOOP.
+
+        MODIFY ztr_et_result FROM TABLE li_result.
+        COMMIT WORK.
+
+        lv_mess = TEXT-015 && ' ' && lv_count && TEXT-033 && lv_count1 && TEXT-034.
+        MESSAGE lv_mess TYPE 'S'.
+        LEAVE TO SCREEN 0.
+
+      ENDIF.
+    WHEN '&DEL'.
+
+      IF NOT ref_grid IS INITIAL.
+
+        CALL METHOD ref_grid->get_selected_rows
+          IMPORTING
+            et_index_rows = li_row
+            et_row_no     = li_row_id.
+      ENDIF.
+
+      IF li_row_id IS NOT INITIAL.
+
+        CALL FUNCTION 'POPUP_TO_CONFIRM'
+          EXPORTING
+            titlebar       = TEXT-030
+*           DIAGNOSE_OBJECT             = ' '
+            text_question  = TEXT-031
+            text_button_1  = 'Yes'
+            icon_button_1  = 'Yes'
+            text_button_2  = 'No'
+            icon_button_2  = 'No'
+*           DEFAULT_BUTTON = '1'
+*           DISPLAY_CANCEL_BUTTON       = 'X'
+*           USERDEFINED_F1_HELP         = ' '
+            start_column   = 25
+            start_row      = 6
+            popup_type     = 'ICON_MESSAGE_WARNING'
+          IMPORTING
+            answer         = lv_ans
+*   TABLES
+*           PARAMETER      =
+          EXCEPTIONS
+            text_not_found = 1
+            OTHERS         = 2.
+        IF sy-subrc <> 0.
+* Implement suitable error handling here
+        ENDIF.
+
+        IF lv_ans = '1'.
+
+          LOOP AT li_row_id INTO DATA(lw_row).
+            READ TABLE i_final ASSIGNING  <ls_final> INDEX lw_row-row_id.
+            IF sy-subrc = 0.
+              <ls_final>-flag = abap_true.
+            ENDIF.
+            CLEAR:lw_final.
+          ENDLOOP.
+        ENDIF.
+      ELSE.
+        MESSAGE TEXT-032 TYPE 'E'.
+      ENDIF.
+    WHEN OTHERS.
+  ENDCASE.
+ENDFORM.
+*&---------------------------------------------------------------------*
+*&      Form  F_UPLOAD_FILES
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->P_P_FILE  text
+*      <--P_I_FINAL  text
+*----------------------------------------------------------------------*
+FORM f_upload_files  USING    p_p_file TYPE rlgrap-filename
+                     CHANGING li_final TYPE STANDARD TABLE.
+  DATA: lv_file TYPE string.
+  IF p_p_file IS NOT INITIAL.
+    CLEAR: lv_file.
+    MOVE p_p_file TO lv_file.
+
+    CALL FUNCTION 'GUI_UPLOAD'
+      EXPORTING
+        filename                = lv_file
+        filetype                = 'ASC'
+        has_field_separator     = 'X'
+      TABLES
+        data_tab                = li_final
+      EXCEPTIONS
+        file_open_error         = 1
+        file_read_error         = 2
+        no_batch                = 3
+        gui_refuse_filetransfer = 4
+        invalid_type            = 5
+        no_authority            = 6
+        unknown_error           = 7
+        bad_data_format         = 8
+        header_not_allowed      = 9
+        separator_not_allowed   = 10
+        header_too_long         = 11
+        unknown_dp_error        = 12
+        access_denied           = 13
+        dp_out_of_memory        = 14
+        disk_full               = 15
+        dp_timeout              = 16
+        OTHERS                  = 17.
+
+    IF sy-subrc <> 0.
+      MESSAGE ID  sy-msgid
+              TYPE sy-msgty
+              NUMBER sy-msgno
+              WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+    ENDIF.
+  ENDIF.
+ENDFORM.
+*&---------------------------------------------------------------------*
+*&      Form  FINAL_TABLE
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM final_table .
+  DATA: lw_excel TYPE t_excel,
+        lv_var   TYPE i.
+
+  DESCRIBE TABLE i_file LINES DATA(lv_lines).
+  lv_var = lv_lines - 2.
+  LOOP AT i_file INTO w_file.
+    IF sy-tabix GT 4 AND sy-tabix LE lv_var.
+      SPLIT w_file AT ',' INTO lw_excel-name
+                           lw_excel-desc
+                        lw_excel-excl_chg
+                        lw_excel-exp_prin
+                        lw_excel-period_chg
+                        lw_excel-cum_chg
+                        lw_excel-hed_exl_chg
+                        lw_excel-hed_print
+                        lw_excel-hed_prd_chg
+                        lw_excel-hed_cum_chg
+                        lw_excel-pe_prd
+                        lw_excel-pe_ltd
+                        lw_excel-rel_prd
+                        lw_excel-rel_ltd
+                        lw_excel-tot_pe_per
+                        lw_excel-tot_pe_ltd
+                        lw_excel-oci_per
+                        lw_excel-oci_ltd
+                        lw_excel-oci_rel_prd
+                        lw_excel-oci_rel_ltd
+                        lw_excel-oci_exl_prd
+                        lw_excel-oci_exl_ltd
+                        lw_excel-oci_exl_rel_prd
+                        lw_excel-oci_exl_rel_ltd
+                        lw_excel-tot_oci_prd
+                        lw_excel-tot_oci_ltd
+                        lw_excel-type
+                        lw_excel-hed_risk
+                        lw_excel-des_date
+                        lw_excel-dedes_date
+                        lw_excel-run_date
+                        lw_excel-rep_cur
+                        lw_excel-cus_id
+                        lw_excel-hed_cus_id
+                        lw_excel-hyp_cus_id
+                        lw_excel-bval_id
+                        lw_excel-portpolio
+                        lw_excel-notes
+                        lw_excel-r_slope
+                        lw_excel-r_ratio
+                        lw_excel-r_sq
+                        lw_excel-r_stat
+                        lw_excel-r_eff
+                        lw_excel-p_slope
+                        lw_excel-p_ratio
+                        lw_excel-p_sq
+                        lw_excel-p_stat
+                        lw_excel-p_eff
+                        lw_excel-stat.
+
+      APPEND lw_excel TO i_excel.
+    ENDIF.
+
+    CLEAR: lw_excel,w_file.
+
+  ENDLOOP.
+
+  SELECT *
+     FROM ztr_hrel
+     INTO CORRESPONDING FIELDS OF TABLE li_hrel
+     FOR ALL ENTRIES IN i_excel
+     WHERE bbrg_hedge_id = i_excel-name.
+
+  CLEAR: v_flag.
+
+  SELECT company_code,
+         hrel_number,
+*          gjahr,
+         test_date,
+         description,
+         pet_result,
+         pet_ratio,
+         ret_result,
+         ret_ratio,
+         upuser,
+         dupdat
+         FROM ztr_et_result INTO TABLE @DATA(li_et_result)
+                        FOR ALL ENTRIES IN @li_hrel
+                        WHERE company_code = @li_hrel-company_code
+                        AND hrel_number    = @li_hrel-hrel_number.
+
+  LOOP AT li_hrel INTO DATA(w_hrel).
+    READ TABLE i_excel INTO lw_excel WITH KEY name = w_hrel-bbrg_hedge_id.
+    IF sy-subrc = 0.
+      SPLIT lw_excel-run_date AT '/' INTO DATA(lv_mon) DATA(lv_day) DATA(lv_year).
+      IF strlen( lv_mon ) = 2 AND strlen( lv_day ) = 2.
+        DATA(lv_date) = lw_excel-run_date+6(4) && lw_excel-run_date+0(2) && lw_excel-run_date+3(2).
+      ELSEIF  strlen( lv_mon ) = 1 AND strlen( lv_day ) = 2.
+        lv_date = lw_excel-run_date+5(4) && '0' && lw_excel-run_date+0(1) && lw_excel-run_date+2(2).
+      ELSEIF  strlen( lv_mon ) = 2 AND strlen( lv_day ) = 1.
+        lv_date = lw_excel-run_date+5(4) && lw_excel-run_date+0(2) && '0' && lw_excel-run_date+3(1).
+      ELSEIF  strlen( lv_mon ) = 1 AND strlen( lv_day ) = 1.
+        lv_date = lw_excel-run_date+4(4) && '0' && lw_excel-run_date+0(1) && '0' && lw_excel-run_date+2(1).
+      ENDIF.
+*      DATA(lv_date) = lw_excel-run_date+6(4) && lw_excel-run_date+3(2) && lw_excel-run_date+0(2).
+      READ TABLE li_et_result INTO DATA(lw_result) WITH KEY   company_code  = w_hrel-company_code
+                                                              hrel_number   = w_hrel-hrel_number
+                                                              test_date     = lv_date.  "s_datum-low.
+      IF sy-subrc = 0.
+        w_final-company_code  = lw_result-company_code.
+        w_final-hrel_number   = lw_result-hrel_number.
+        w_final-description   = w_hrel-bbrg_hedge_id.
+*        w_final-fiscal_year   = lw_result-gjahr.
+        w_final-eff_testdate  = lw_result-test_date.
+        w_final-eff_testdate1  = lw_result-test_date.
+        w_final-eff_test_type1 = 2.
+        w_final-et_ustatus = lw_result-pet_result.
+        w_final-et_ustatus1 = lw_result-ret_result.
+        w_final-eff_test_type = 1.
+        w_final-eff_test_desc = TEXT-005.
+        w_final-eff_test_desc1 = TEXT-006.
+        w_final-eff_ratio    = lw_result-pet_ratio.
+        w_final-eff_ratio1    = lw_result-ret_ratio.
+        v_flag = abap_true.
+      ELSE.
+        w_final-company_code  = w_hrel-company_code.
+        w_final-hrel_number   = w_hrel-hrel_number.
+        w_final-description   = lw_excel-name.
+        w_final-eff_test_type = 1.
+        w_final-eff_test_desc = TEXT-005.
+        w_final-eff_test_type1 = 2.
+        w_final-eff_test_desc1 = TEXT-006.
+*        IF lw_excel-run_date IS INITIAL.
+*          w_final-eff_testdate = s_datum-low.
+*          w_final-eff_testdate1 = s_datum-low.
+*        ELSE.
+        w_final-eff_testdate = lv_date. "lw_excel-run_date.
+        w_final-eff_testdate1 = lv_date.  " lw_excel-run_date.
+*        ENDIF.
+
+
+        IF lw_excel-p_eff = TEXT-026.
+          w_final-et_ustatus = 1.
+        ELSEIF lw_excel-p_eff = TEXT-025.
+          w_final-et_ustatus = 2.
+        ENDIF.
+
+
+        IF lw_excel-r_eff = TEXT-026.
+          w_final-et_ustatus1 = 1.
+        ELSEIF lw_excel-r_eff = TEXT-025.
+          w_final-et_ustatus1 = 2.
+        ENDIF.
+
+        IF lw_excel-p_eff IS INITIAL.
+          w_final-et_ustatus = w_final-et_ustatus1.
+        ELSEIF lw_excel-r_eff  IS INITIAL.
+          w_final-et_ustatus1 = w_final-et_ustatus.
+        ENDIF.
+
+        IF lw_excel-p_ratio EQ '--'.
+          w_final-eff_ratio = lw_excel-r_ratio.
+        ELSE.
+          w_final-eff_ratio = lw_excel-p_ratio.
+        ENDIF.
+
+        IF lw_excel-r_ratio EQ '--'.
+          w_final-eff_ratio1 = lw_excel-p_ratio.
+        ELSE.
+          w_final-eff_ratio1 = lw_excel-r_ratio.
+        ENDIF.
+
+      ENDIF.
+
+      w_final-upuser        = lw_result-upuser.
+      w_final-dupdat        = lw_result-dupdat.
+
+      APPEND w_final TO i_final.
+      CLEAR: w_final, w_hrel, lw_result, lv_date.
+    ENDIF.
+  ENDLOOP.
+
+  SORT i_final ASCENDING BY hrel_number.
+
+ENDFORM.
+FORM pf_status USING rt_extab TYPE slis_t_extab..
+  SET PF-STATUS 'ZSTANDARD'.
+ENDFORM.
+*&---------------------------------------------------------------------*
+*&      Form  F_UPLOAD_APP_SERVER
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM f_upload_app_server USING p_p_file .
+  DATA: lv_crlf(1) TYPE c VALUE cl_abap_char_utilities=>cr_lf.
+
+  OPEN DATASET p_p_file FOR INPUT IN TEXT MODE ENCODING DEFAULT.
+  IF sy-subrc = 0.
+    DO.
+      READ DATASET p_p_file INTO w_file.
+      IF sy-subrc = 0.
+        IF sy-index GT 4.
+          SPLIT w_file AT ',' INTO  lw_excel-name
+                           lw_excel-desc
+                        lw_excel-excl_chg
+                        lw_excel-exp_prin
+                        lw_excel-period_chg
+                        lw_excel-cum_chg
+                        lw_excel-hed_exl_chg
+                        lw_excel-hed_print
+                        lw_excel-hed_prd_chg
+                        lw_excel-hed_cum_chg
+                        lw_excel-pe_prd
+                        lw_excel-pe_ltd
+                        lw_excel-rel_prd
+                        lw_excel-rel_ltd
+                        lw_excel-tot_pe_per
+                        lw_excel-tot_pe_ltd
+                        lw_excel-oci_per
+                        lw_excel-oci_ltd
+                        lw_excel-oci_rel_prd
+                        lw_excel-oci_rel_ltd
+                        lw_excel-oci_exl_prd
+                        lw_excel-oci_exl_ltd
+                        lw_excel-oci_exl_rel_prd
+                        lw_excel-oci_exl_rel_ltd
+                        lw_excel-tot_oci_prd
+                        lw_excel-tot_oci_ltd
+                        lw_excel-type
+                        lw_excel-hed_risk
+                        lw_excel-des_date
+                        lw_excel-dedes_date
+                        lw_excel-run_date
+                        lw_excel-rep_cur
+                        lw_excel-cus_id
+                        lw_excel-hed_cus_id
+                        lw_excel-hyp_cus_id
+                        lw_excel-bval_id
+                        lw_excel-portpolio
+                        lw_excel-notes
+                        lw_excel-r_slope
+                        lw_excel-r_ratio
+                        lw_excel-r_sq
+                        lw_excel-r_stat
+                        lw_excel-r_eff
+                        lw_excel-p_slope
+                        lw_excel-p_ratio
+                        lw_excel-p_sq
+                        lw_excel-p_stat
+                        lw_excel-p_eff.
+
+          REPLACE ALL OCCURRENCES OF lv_crlf IN lw_excel-p_eff WITH ' '.
+          CONDENSE: lw_excel-p_eff.
+
+          APPEND lw_excel TO i_excel.
+          CLEAR: lw_excel,w_file.
+        ENDIF.
+      ELSE.
+        EXIT.
+      ENDIF.
+    ENDDO.
+  ELSE.
+    MESSAGE TEXT-023 TYPE 'E'.
+  ENDIF.
+  CLOSE DATASET p_p_file.
+
+  DESCRIBE TABLE i_excel LINES DATA(lv_lines).
+  DELETE i_excel INDEX lv_lines.
+  DELETE i_excel WHERE name = ' '.
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*&      Form  F_GET_SAPDIR_PATH
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->P_P_SERPATH  text
+*      <--P_P_FILEPATH  text
+*----------------------------------------------------------------------*
+*FORM f_get_sapdir_path  CHANGING p_filepath.
+*
+*
+*  DATA: lv_path TYPE dxfields-longpath.
+*
+*  CLEAR: lv_path.
+*
+*  lv_path = '/sapinterface/FAM/HEDGE/processing'.
+*
+*  CALL FUNCTION '/SAPDMC/LSM_F4_SERVER_FILE'
+*    EXPORTING
+*      directory        = lv_path
+**     filemask         = pi_file
+*    IMPORTING
+*      serverfile       = p_filepath
+*    EXCEPTIONS
+*      canceled_by_user = 1
+*      OTHERS           = 2.
+*
+*
+*  IF sy-subrc <> 0.
+*    MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+*             WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+*
+*  ENDIF.
+*
+*
+*
+*ENDFORM.
+*&---------------------------------------------------------------------*
+*&      Form  SAVEDATA
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM savedata .
+
+  DATA: li_result TYPE TABLE OF ztr_et_result,
+        lw_result TYPE ztr_et_result,
+        lv_path   TYPE rlgrap-filename.
+
+  LOOP AT i_final INTO DATA(lw_final) WHERE
+          ( et_ustatus IS NOT INITIAL OR et_ustatus1 IS NOT INITIAL ).
+    CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+      EXPORTING
+        input  = lw_final-hrel_number
+      IMPORTING
+        output = lw_final-hrel_number.
+
+    lw_result-company_code  = lw_final-company_code.
+    lw_result-hrel_number   = lw_final-hrel_number.
+    lw_result-test_date     = lw_final-eff_testdate.
+    lw_result-description   = lw_final-description.
+
+    IF lw_final-et_ustatus IS NOT INITIAL AND lw_final-eff_ratio NE '0.0000000'.
+      lw_result-pet_result    = lw_final-et_ustatus.
+      lw_result-pet_ratio     = lw_final-eff_ratio.
+    ENDIF.
+
+    IF lw_final-et_ustatus1 IS NOT INITIAL AND lw_final-eff_ratio1 NE '0.0000000'.
+      lw_result-ret_result    = lw_final-et_ustatus1.
+      lw_result-ret_ratio     = lw_final-eff_ratio1.
+    ENDIF.
+
+    lw_result-upuser        = sy-uname.
+    lw_result-dupdat        = sy-datum.
+
+    APPEND lw_result TO li_result.
+    CLEAR: lw_final,lw_result.
+
+  ENDLOOP.
+
+  MODIFY ztr_et_result FROM TABLE li_result.
+  COMMIT WORK.
+
+*        IF p_check NE abap_true AND p_upload EQ abap_true.
+
+  OPEN DATASET p_file FOR INPUT IN TEXT MODE ENCODING DEFAULT .
+  IF sy-subrc = 0.
+    lv_path = p_file.
+    REPLACE ALL OCCURRENCES OF 'processing' IN lv_path WITH 'backup'.
+    OPEN DATASET lv_path FOR OUTPUT IN TEXT MODE ENCODING DEFAULT.
+    IF sy-subrc = 0.
+      DO .
+        READ DATASET p_file INTO w_file.
+        IF sy-subrc = 0.
+          TRANSFER w_file TO lv_path.
+        ELSE.
+          EXIT.
+        ENDIF.
+      ENDDO.
+    ENDIF.
+    CLOSE DATASET lv_path.
+  ENDIF.
+  DELETE DATASET p_file.
+  CLOSE DATASET p_file.
+
+*        ENDIF.
+
+ENDFORM.

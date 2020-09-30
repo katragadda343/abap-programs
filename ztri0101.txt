@@ -1,0 +1,514 @@
+*&---------------------------------------------------------------------*
+*& Report ZTRI0101
+*&---------------------------------------------------------------------*
+*&
+*&---------------------------------------------------------------------*
+*=======================================================================
+* Program          :  ZTRI0101
+* Created by       :  Ravi Teja Katragadda
+* Search on        :
+* Date             :  05 Sep 2019
+* Business Analyst :  Pankaj Jain
+* Project          :  Hedge Accounting Automation
+* PIR/PCR          :  PCR 9000020083
+* Description      :  Mass Reversal of Hedge Accounting Entries
+*=======================================================================
+*&---------------------------------------------------------------------*
+*                         MODIFICATION HISTORY
+*&---------------------------------------------------------------------*
+* Changed by       :
+* Search on        :
+* Date             :
+* Business Analyst :
+* Project          :
+* PIR/PCR          :
+* Description      :
+*&---------------------------------------------------------------------*
+Report ZTRI0101.
+
+TABLES: dift_pos_ident.
+TYPE-POOLS: truxs,slis, tpmco.
+
+TYPES: BEGIN OF t_final,
+         bukrs           TYPE dift_pos_ident-company_code,
+         sec_acc         TYPE dift_pos_ident-security_account,
+         sec_id          TYPE dift_pos_ident-security_id,
+         date            TYPE trlt_flow-calculation_date,
+         flowtype        TYPE trlt_flow-flowtype,
+         desc(60),
+         status(60),
+         units           TYPE trlt_flow-units,
+         position_amt    TYPE  trlt_flow-position_amt,
+         position_curr   TYPE trlt_flow-position_curr,
+         nominal_amt     TYPE  trlt_flow-nominal_amt,
+         nominal_curr    TYPE  trlt_flow-nominal_curr,
+         reason_desc(30),
+         rev_reason      TYPE sstogrd,
+         period          TYPE tpm_fi_reversal_period,
+         check(1),
+       END OF t_final,
+
+       BEGIN OF t_reason,
+         sstogrd  TYPE sstogrd,
+         xlangbez TYPE xlangbez,
+       END OF t_reason.
+
+DATA: i_final TYPE TABLE OF t_final,
+      w_final TYPE t_final.
+
+
+DATA: i_fcat_new TYPE slis_t_fieldcat_alv,
+      w_fcat_new TYPE slis_fieldcat_alv,
+      i_fcat     TYPE lvc_t_fcat,
+      w_fcat     TYPE lvc_s_fcat,
+      w_layout   TYPE lvc_s_layo,
+      v_repid    TYPE sy-repid,
+      i_f4reason TYPE TABLE OF t_reason.
+
+DATA: lo_alv       TYPE REF TO cl_gui_alv_grid,
+      lo_container TYPE REF TO cl_gui_docking_container.
+
+DATA: li_position TYPE trly_position_value,
+      li_pos      TYPE trly_position_value.
+
+DATA: l_p_claspos     TYPE REF TO cl_class_position_trs,
+      l_prod_type     TYPE vwpanla-gsart,
+      l_tab_flows     TYPE trsy_clasflo,
+      l_tab_flows_all TYPE STANDARD TABLE OF ztr_rev_flow,
+      ls_flow_all     TYPE ztr_rev_flow.
+
+SELECTION-SCREEN: BEGIN OF BLOCK b1 WITH FRAME TITLE TEXT-001.
+SELECTION-SCREEN SKIP.
+PARAMETERS: p_bukrs TYPE dift_pos_ident-company_code OBLIGATORY DEFAULT 'HK01'.
+SELECT-OPTIONS : s_sec_ac FOR dift_pos_ident-security_account,
+                 s_sec_id FOR dift_pos_ident-security_id.
+PARAMETERS: p_budat  TYPE budat DEFAULT sy-datum,
+            p_reason TYPE sstogrd DEFAULT '01' OBLIGATORY.
+SELECTION-SCREEN SKIP.
+SELECTION-SCREEN: END OF BLOCK b1.
+
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_reason.
+  PERFORM f4_reason CHANGING p_reason.
+
+AT SELECTION-SCREEN.
+  PERFORM f_validate.
+
+START-OF-SELECTION.
+  PERFORM f_data_process.
+
+END-OF-SELECTION.
+  PERFORM f_catalog.
+  CALL SCREEN 1001.
+
+*&---------------------------------------------------------------------*
+*&      Form  F_VALIDATE
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM f_validate .
+
+  SELECT DISTINCT  company_code,
+                   security_account,
+                    security_id FROM dift_pos_ident INTO TABLE @DATA(li_pos_ident)
+                          WHERE company_code     = @p_bukrs
+                          AND  security_id      IN @s_sec_id
+                          AND  security_account IN @s_sec_ac
+                          AND  context           = 'TRL'.
+
+  IF li_pos_ident IS INITIAL.
+    MESSAGE TEXT-002 TYPE 'E'.
+  ENDIF.
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*&      Form  F_DATA_PROCESS
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM f_data_process .
+
+  FIELD-SYMBOLS : <ls_flow> TYPE trst_clasflo.
+
+  IF p_budat IS INITIAL.
+    p_budat = sy-datum.
+  ENDIF.
+  SELECT   company_code,
+            security_id,
+           security_account
+    FROM dift_pos_ident INTO TABLE @DATA(li_ident)
+                          WHERE company_code = @p_bukrs
+                          AND  security_id IN @s_sec_id
+                          AND  security_account IN @s_sec_ac
+                          AND valuation_area = '001'
+                          AND  context = 'TRL'.
+
+  SORT li_ident BY company_code security_id security_account.
+  DELETE ADJACENT DUPLICATES FROM li_ident COMPARING company_code security_id security_account.
+
+  LOOP AT li_ident INTO DATA(lw_ident).
+
+* find the class position
+    REFRESH l_tab_flows.
+    CALL METHOD ca_class_position_trs=>agent->read_by_position
+      EXPORTING
+        im_company_code     = lw_ident-company_code
+        im_security_account = lw_ident-security_account
+        im_security_id      = lw_ident-security_id
+      RECEIVING
+        re_class_position   = l_p_claspos
+      EXCEPTIONS
+        position_not_found  = 1
+        OTHERS              = 2.
+    IF sy-subrc = 1.
+    ELSEIF sy-subrc = 2.
+    ENDIF.
+    IF NOT l_p_claspos IS INITIAL.
+      l_tab_flows = l_p_claspos->getu_tab_flows( ).
+    ENDIF.
+* display only fixed flows which were generated by TRS
+
+    DELETE l_tab_flows WHERE dis_flowtype NP 'ZVHED*'.
+
+    DELETE l_tab_flows
+      WHERE NOT ( ( trd_state = tpmco_con_trd_fixed
+                  AND (  trd_bustranscat = tpmco_repayment_act
+                      OR trd_bustranscat = tpmco_repayment_pas
+                      OR trd_bustranscat = tpmco_con_instllm_repaym_act
+                      OR trd_bustranscat = tpmco_con_instllm_repaym_pas
+                      OR trd_bustranscat = tpmco_interest
+                      OR trd_bustranscat = tpmco_capital_interest_act
+                      OR trd_bustranscat = tpmco_capital_interest_pas
+                      OR trd_bustranscat = tpmco_dividend
+                      OR trd_bustranscat = tpmco_suppl_payment
+                      OR trd_bustranscat = tpmco_incom_payment
+                      OR trd_bustranscat = tpmco_fee_tax
+                      OR trd_bustranscat = tpmco_stock_dividend
+                      OR trd_bustranscat = tpmco_con_fixed_period_end
+                      OR trd_bustranscat = tpmco_charges_similar_interest  ) )
+           OR ( trd_state = tpmco_con_trd_planned
+                  AND trd_bustranscat = tpmco_fee_tax
+                  AND swoher = 'M' ) ).
+
+    IF l_tab_flows IS NOT INITIAL.
+      LOOP AT l_tab_flows ASSIGNING <ls_flow>.
+        CLEAR ls_flow_all.
+        MOVE-CORRESPONDING <ls_flow> TO ls_flow_all.
+        ls_flow_all-company_code     = lw_ident-company_code.
+        ls_flow_all-security_account = lw_ident-security_account.
+        ls_flow_all-security_id      = lw_ident-security_id.
+        APPEND ls_flow_all TO l_tab_flows_all.
+      ENDLOOP.
+    ENDIF.
+
+  ENDLOOP.
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*&      Form  F_CATALOG
+*&---------------------------------------------------------------------*
+*       text
+*------------------------------------------------------------------
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM f_catalog .
+
+  PERFORM fill_cat USING : 'COMPANY_CODE'     'L_TAB_FLOWS_ALL' TEXT-014,
+                           'SECURITY_ACCOUNT' 'L_TAB_FLOWS_ALL' TEXT-015,
+                           'SECURITY_ID'      'L_TAB_FLOWS_ALL' TEXT-016,
+                           'COM_VAL_CLASS'    'L_TAB_FLOWS_ALL' TEXT-017,
+                           'PORTFOLIO'        'L_TAB_FLOWS_ALL' TEXT-018,
+                           'TRD_FLOWNR'       'L_TAB_FLOWS_ALL' TEXT-019,
+                           'TRD_STATE'        'L_TAB_FLOWS_ALL' TEXT-020,
+                           'DIS_FLOWTYPE'     'L_TAB_FLOWS_ALL' TEXT-021,
+                           'FLOWCAT_TRS'      'L_TAB_FLOWS_ALL' TEXT-022,
+                           'POSITION_CURR'    'L_TAB_FLOWS_ALL' TEXT-023,
+                           'POSITION_AMT'     'L_TAB_FLOWS_ALL' TEXT-024,
+                           'POSITION_DATE'    'L_TAB_FLOWS_ALL' TEXT-025,
+                           'UNITS'            'L_TAB_FLOWS_ALL' TEXT-026,
+                           'LOCAL_CURR'       'L_TAB_FLOWS_ALL' TEXT-027,
+                           'LOCAL_AMT'        'L_TAB_FLOWS_ALL' TEXT-028,
+                           'PAYMENT_AMT'      'L_TAB_FLOWS_ALL' TEXT-029,
+                           'PAYMENT_CURR'     'L_TAB_FLOWS_ALL' TEXT-030,
+                           'PAYMENT_DATE'     'L_TAB_FLOWS_ALL' TEXT-031,
+                           'RAHABKI'          'L_TAB_FLOWS_ALL' TEXT-032,
+                           'RAHKTID'          'L_TAB_FLOWS_ALL' TEXT-033,
+                           'FIXING_USER'      'L_TAB_FLOWS_ALL' TEXT-034,
+                           'FIXING_DATE'      'L_TAB_FLOWS_ALL' TEXT-035,
+                           'FIXING_TIME'      'L_TAB_FLOWS_ALL' TEXT-036,
+                           'SWOHER'           'L_TAB_FLOWS_ALL' TEXT-037,
+                           'DVALUT'           'L_TAB_FLOWS_ALL' TEXT-038,
+                           'DFAELL'           'L_TAB_FLOWS_ALL' TEXT-039.
+
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*&      Module  STATUS_1001  OUTPUT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+MODULE status_1001 OUTPUT.
+  SET PF-STATUS 'ZSTANDARD'.
+*  SET TITLEBAR 'xxx'.
+
+  PERFORM display.
+
+ENDMODULE.
+
+*&---------------------------------------------------------------------*
+*&      Form  DISPLAY
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM display .
+
+  w_layout-cwidth_opt = 'X'  .
+  w_layout-sel_mode = 'D' .
+
+  CREATE OBJECT lo_container
+    EXPORTING
+      repid     = sy-repid
+      side      = cl_gui_docking_container=>dock_at_top
+      extension = 500.
+
+  CREATE OBJECT lo_alv
+    EXPORTING
+      i_parent = lo_container.
+
+  CALL METHOD lo_alv->set_table_for_first_display
+    EXPORTING
+      is_layout                     = w_layout
+    CHANGING
+      it_outtab                     = l_tab_flows_all
+      it_fieldcatalog               = i_fcat
+    EXCEPTIONS
+      invalid_parameter_combination = 1
+      program_error                 = 2
+      too_many_lines                = 3
+      OTHERS                        = 4.
+
+  IF sy-subrc EQ 1.
+  ELSEIF sy-subrc EQ 2.
+  ELSEIF sy-subrc EQ 3.
+  ENDIF.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Module  USER_COMMAND_1001  INPUT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+MODULE user_command_1001 INPUT.
+
+  CASE sy-ucomm.
+    WHEN '&BACK'.
+      LEAVE TO SCREEN 0.
+    WHEN '&F15'.
+      LEAVE TO SCREEN 0.
+    WHEN '&F12'.
+      LEAVE TO SCREEN 0.
+    WHEN '&REV'.
+      PERFORM f_reversal.
+  ENDCASE.
+
+ENDMODULE.
+*&---------------------------------------------------------------------*
+*&      Form  F_REVERSAL
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM f_reversal .
+
+  DATA: lcl_claspos         TYPE REF TO cl_class_position_trs,
+        li_flow_cfd         TYPE trsy_clasflo_cfd,
+        ls_flow_cfd         TYPE trss_clasflo_cfd,
+        lw_flow             TYPE trss_claspos_i,
+        lv_post_type        TYPE char10,
+        l_class_position_op TYPE REF TO cl_class_position_op_trs,
+        l_protocol_handler  TYPE REF TO cl_protocol_handler_trp,
+        l_distributor       TYPE REF TO if_distributor_trd.
+
+  DATA : lt_index_rows TYPE lvc_t_row,
+         lt_row_number TYPE lvc_t_roid.
+
+  IF NOT lo_alv IS INITIAL.
+    CALL METHOD lo_alv->check_changed_data.
+  ENDIF.
+
+  CREATE OBJECT l_protocol_handler.
+
+  CALL METHOD lo_alv->get_selected_rows
+    IMPORTING
+      et_index_rows = lt_index_rows
+      et_row_no     = lt_row_number.
+
+  LOOP AT lt_index_rows INTO DATA(ls_index_rows).
+
+    READ TABLE l_tab_flows_all INTO DATA(ls_flow_all_1) INDEX ls_index_rows-index.
+    IF sy-subrc EQ 0.
+
+      FREE : lcl_claspos, l_distributor, l_class_position_op.
+      CLEAR : ls_flow_cfd, lv_post_type.
+      REFRESH li_flow_cfd.
+
+      CALL METHOD ca_class_position_trs=>agent->read_by_position
+        EXPORTING
+          im_company_code     = ls_flow_all_1-company_code
+          im_security_account = ls_flow_all_1-security_account
+          im_security_id      = ls_flow_all_1-security_id
+        RECEIVING
+          re_class_position   = lcl_claspos
+        EXCEPTIONS
+          position_not_found  = 1
+          OTHERS              = 2.
+      IF sy-subrc = 1.
+      ELSEIF sy-subrc = 2.
+      ENDIF.
+*    CALL METHOD lcl_claspos->enqueue
+*      EXCEPTIONS
+*        locked = 1
+*        failed = 2.
+*
+      MOVE-CORRESPONDING ls_flow_all_1 TO ls_flow_cfd.
+      APPEND ls_flow_cfd TO li_flow_cfd.
+
+* create a distributor instance
+      CALL METHOD cl_distributor_factory_trd=>cls_get_distributor
+        EXPORTING
+          im_distributor_category = '2'
+          im_company_code         = p_bukrs
+          im_protocol_handler     = l_protocol_handler
+          im_tcode                = 'FWOEZ'
+        RECEIVING
+          re_distributor          = l_distributor.
+
+      CREATE OBJECT l_class_position_op
+        EXPORTING
+          im_class_position = lcl_claspos.
+
+      CALL METHOD l_class_position_op->reverse_transaction_manu
+        EXPORTING
+          im_distributor        = l_distributor
+          im_tab_flows          = li_flow_cfd
+          im_reversal_reason    = p_reason
+          im_fi_reversal_date   = p_budat
+          im_fi_reversal_period = '00'
+          im_protocol_handler   = l_protocol_handler
+        EXCEPTIONS
+          failed                = 1.
+      IF sy-subrc <> 0.
+        CALL METHOD l_distributor->undo( ).
+        ROLLBACK WORK.
+        MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+            WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+      ENDIF.
+
+      CALL METHOD l_distributor->distribute
+        EXCEPTIONS
+          failed = 1.
+      IF sy-subrc = 0.
+        CALL METHOD l_distributor->save( ).
+        COMMIT WORK.
+        WAIT UP TO 2 SECONDS.
+        CALL METHOD l_protocol_handler->set_commit.
+        " delete the control table record
+        IF ls_flow_all_1-dis_flowtype CS 'PL'.
+          lv_post_type = 'PNL'.
+        ELSEIF ls_flow_all_1-dis_flowtype CS 'AD'.
+          lv_post_type = 'AMORT'.
+        ELSEIF ls_flow_all_1-dis_flowtype CS 'OC'.
+          lv_post_type = 'OCI'.
+        ENDIF.
+
+        DELETE FROM ztr_amort WHERE
+                    key_date       = ls_flow_all_1-position_date AND
+                    post_type      = lv_post_type                AND
+                    security_id     = ls_flow_all_1-security_id.
+      ELSE.
+*   error-handling
+*   1) save guid for g_p_claspos
+*    l_claspos_guid = g_p_claspos->getu_oid( ).
+*   2) undo, rollback, messageprotocol
+        CALL METHOD l_distributor->undo( ).
+        ROLLBACK WORK.
+        CALL METHOD l_protocol_handler->set_rollback
+          EXPORTING
+            im_rollback_reason = tpmco_rollback_reason_error.
+*   3) restore g_p_claspos of object service after rollback
+*    PERFORM g_p_claspos_init
+*      USING
+*        l_claspos_guid
+*      CHANGING
+*        l_claspos_key_dummy.
+*    MESSAGE i421(trs0).
+      ENDIF.
+    ENDIF.
+  ENDLOOP.
+
+  CALL METHOD l_protocol_handler->display_all_protocols.
+  MESSAGE s424(trs0).
+  LEAVE TO TRANSACTION sy-tcode.
+
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*&      Form  F4_REASON
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      <--P_P_REASON  text
+*----------------------------------------------------------------------*
+FORM f4_reason  CHANGING p_p_reason.
+
+  SELECT sstogrd
+         xlangbez FROM tzst1  INTO TABLE i_f4reason WHERE spras = 'E'.    "#EC CI_NOORDER
+*                  ORDER BY sstogrd xlangbez .
+  SORT  i_f4reason ASCENDING BY sstogrd xlangbez .
+
+  CALL FUNCTION 'F4IF_INT_TABLE_VALUE_REQUEST'
+    EXPORTING
+      retfield        = 'SSTOGRD'
+      dynpprog        = sy-repid
+      dynpnr          = '1000'
+      dynprofield     = 'P_REASON'
+      value_org       = 'S'
+    TABLES
+      value_tab       = i_f4reason
+    EXCEPTIONS
+      parameter_error = 1
+      no_values_found = 2
+      OTHERS          = 3.
+  IF sy-subrc NE 0.
+    MESSAGE ID  sy-msgid
+           TYPE sy-msgty
+           NUMBER sy-msgno
+           WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+  ENDIF.
+
+
+
+ENDFORM.
+FORM fill_cat  USING    VALUE(p_fname)
+                        VALUE(p_tabname)
+                        VALUE(p_text).
+
+  w_fcat-fieldname = p_fname.
+  w_fcat-tabname = p_tabname.
+  w_fcat-coltext = p_text.
+  APPEND w_fcat TO i_fcat.
+  CLEAR:w_fcat.
+
+ENDFORM.
