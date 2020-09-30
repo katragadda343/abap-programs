@@ -1,0 +1,4491 @@
+*&---------------------------------------------------------------------*
+*& Report  ZTRR_TRANSACTION
+*&
+*&---------------------------------------------------------------------*
+*& Program            : ZTRR_TRANSACTION
+*& Program Title      : Transaction Report
+*& Author             : Anita Agustina (HCL-Axon)
+*& Creation Date      : 10.08.2010
+*& Package            : ZAED
+*& Change Request No  : AEDK908136
+*& Description        : This report is to capture the original cost,
+*&                      purchase costs, costs of sales and settlement
+*&                      amount of disposals with RCG(L)–realized capital
+*&                      gain or loss–incurred by transactions such as
+*&                      purchase, sales, maturity and redemption,
+*&                      as displaying capitalized costs and accrued
+*&                      interest in transaction level
+*& Remarks            :
+*&---------------------------------------------------------------------*
+* PCR NO.      Version DATE       AMENDED BY  REASON
+*-----------------------------------------------------------------------
+* AEDK909557   XXnnn   15-Nov-2010 Betty   CR237
+* AEDK916621   XXnnn   18-Nov-2011 HACHVD3 PIR9000000725 Calculate Realized
+*                                          Capital Gain or Loss for China
+*                                          transactions
+*-----------------------------------------------------------------------
+* Changed by       : Ting Wei Hong(KSCSP56)
+* Search on        :
+* Date             : 16 Jan 2012
+* Business Analyst : Mani
+* Project	         : EHP5 Upgrade
+* PIR/PCR          :
+* Description      : 1. Add P_BILSTF for logical database selectiondue to
+*                       this field has become mandatory field in EHP5
+*=======================================================================
+* Changed by       : Phoebe Yong (KSCSP10)
+* Search on        : PY001
+* Date             : 12 September 2012
+* Business Analyst : Kavitha
+* Project	         :
+* PIR/PCR          : PIR 4000000069 / 6000001524
+* Description      :
+* 1. Remove the manual conversion
+* 2. Add the curr code in ALV->set_currency_column.
+* a. When the value in PC, display value with position curr code(SBWHR).
+* b. When the value in VC, display value with valuation curr code(SVWHR).
+*=======================================================================
+* Changed by       : Ow Meng Yuan (KAP050)
+* Search on        : OW001
+* Date             : 14 May 2014
+* Business Analyst : Debobrato
+* Project	         :
+* PIR/PCR          : PIR 4000011594 / 6000002378
+* Description      :
+* 1. Logic to assign value for counter DBT_E081, DBT_E082, DBT_E083,
+*    and DBT_E084.
+* 2. Add new columns COS PC(D), COS VC(D), COS RC(D)
+*=======================================================================
+* Changed by       : Chua Yuan Wei (KSAP064)
+* Search on        : AC001
+* Date             : 20 Jan 2015
+* Business Analyst : Deborato Goswami
+* Project	         : EHP7 Upgrade
+* PIR/PCR          :
+* Description      : EHP7 LDB parameters changed
+*=======================================================================
+* Changed by       : Chua Yuan Wei (KSAP064)
+* Search on        : AC002
+* Date             : 11 Nov 2015
+* Business Analyst : Woon Peng
+* Project	         :
+* PIR/PCR          : PCR 9000002306
+* Description      : MYIA-FAM-ZTRR0004 Transaction Report Enh
+*=======================================================================
+* Changed by       : Chua Yuan Wei (KSAP064)
+* Search on        : AC003
+* Date             : 22 Nov 2017
+* Business Analyst : Koti
+* Project	         :
+* PIR/PCR          : PCR 9000003265
+* Description      : TH Pensions and ILP
+*=======================================================================
+REPORT  ztrr_transaction_cn MESSAGE-ID ztr_mc_r0004.
+
+*------------------types pools and tables------------------------*
+TYPE-POOLS:
+*SLIS,         "CR237
+ abap, rsfs.
+TABLES: fti_ldb_tr_periods, sscrfields,
+        adr6. "AC003+
+DATA: w_table      TYPE REF TO cl_salv_table.
+DATA: w_columns    TYPE REF TO cl_salv_columns.
+
+*-----------------------------------------------------------------------
+* CONSTANTS
+*-----------------------------------------------------------------------
+CONSTANTS c_ldb_dbs TYPE screen-group2 VALUE 'DBS'.         "Group2 of LDB selection option fields
+
+*-----------------------------------------------------------------------
+* TYPES
+*-----------------------------------------------------------------------
+"periods itab for reporting,
+*** Start of AC003+ ***
+DATA: zznominal_amt TYPE P LENGTH 16 DECIMALS 6.
+*** End of  AC003+ ***
+TYPES: BEGIN OF t_report,
+        bukrs             TYPE  bukrs,                "Company code
+        butxt             TYPE  butxt,                "company name
+        valuation_area    TYPE  tpm_val_area,         "Valuation Area
+        val_area_name     TYPE  tpm_val_area_name,    "valuation area name
+        valuation_class   TYPE  tpm_val_class,        "Valuation class
+        val_class_name    TYPE  tpm_val_class_name,   "valuation class name
+        portfolio         TYPE  tpm_portfolio_diff,   "portfolio
+        xportb            TYPE  vvxportb,             "portforlio name
+        security_account  TYPE  vrldepo,              "security account
+        kontrh            TYPE  tb_kunnr_new,         "business partner
+        name_org1         TYPE  bu_nameor1,           "Business Partner Name
+        gsart             TYPE  vvsart,               "Product type
+        ltx               TYPE  text30,               "Product type name
+        alwpkl            TYPE  alwpkl,               "General Security Classification
+        xlangbez          TYPE  xlangbez,             "Security Classification name
+        swerttyp          TYPE  swerttyp,             "Security Type
+        sec_type_nm       TYPE  xlangbez,             "Security Type name
+        security_id       TYPE  vvranlw,              "Security ID
+        xallb             TYPE  xallb,                "Long name
+        mac_type          TYPE  zzmac_type,           "Mac Type
+        ny_sec_type       TYPE  zz_ny_sec_type,       "NY Sec Type
+        lot_id            TYPE  tpm_lot_id,           "Lot ID
+        deal_number       TYPE  fti_posrfha,          "Position-Generating Financial Transaction
+        lotgen_dealnr     TYPE  fti_lotgeneration_dealnr, "Lot-Generating Transaction Number (Listed Derivatives)
+        trans_no          TYPE  fti_posrfha,          "transaction number will be displayed in report
+        se_deal_number    TYPE  fti_se_rfha,          "Securities/Futures Transaction
+        sbwhr             TYPE  tb_bwhr,              "Position Currency
+        svwhr             TYPE  tpm_valuation_curr,   "Valuation Currency
+        dbestand          TYPE  dbestand,             "Trade Date
+        dzterm            TYPE  tb_dzterm,            "Settlement Date
+        delfz             TYPE  delfz,                "Maturity Date
+        hk_reg_lob        TYPE  zzuser01,             "HK Regulatory LOB
+        hk_reg_lob_nm     TYPE  text50,               "HK Regulatory LOB Name
+        ifrs              TYPE  zzuser02,             "IFRS
+        ifrs_nm           TYPE  text50,               "IFRS Name
+        local_reg_lob     TYPE  zzuser03,             "Local Regulatory LOB
+        local_reg_lob_nm  TYPE  text50,               "Local Regulatory LOB Name
+        gaap_cd           TYPE  zzuser06,             "GAAP Code
+        gaap_cd_nm        TYPE  text50,               "GAAP Code Name
+        prctr             TYPE  prctr,                "Profit Center
+        ktext             TYPE  ktext,                "Profit Center Name
+        zuond             TYPE  tb_zuond,             "Assignment
+        trl_bookingstate  TYPE  buchst_cfm_par,       "Posting status
+        posting_status    TYPE  char3,                "Posting status text
+        trans_type        TYPE  zz_ttype,             "Transaction type
+*       nom_units         TYPE  fti_d_nominal_amt_pc, "Nominal/units "AC003-
+        nom_units         LIKE  zznominal_amt,                       "AC003+
+        pkond             TYPE  pkond,                "Coupon rate
+        orig_cost_pc      TYPE  tpm_amount,           "Original Cost in PC
+        orig_cost_vc      TYPE  tpm_amount,           "Original Cost in VC
+        orig_cost_rc      TYPE  tpm_amount,           "Original Cost in RC
+        purc_cost_pc      TYPE  tpm_amount,           "Purchase Cost in PC
+        purc_cost_vc      TYPE  tpm_amount,           "Purchase Cost in VC
+        purc_cost_rc      TYPE  tpm_amount,           "Purchase Cost in RC
+        accr_int_pc       TYPE  tpm_amount,           "Accrued Interest in PC
+        accr_int_vc       TYPE  tpm_amount,           "Accrued Interest in VC
+        accr_int_rc       TYPE  tpm_amount,           "Accrued Interest in RC
+        fee_purc_pc       TYPE  tpm_amount,           "Handling Fee on Purchase in PC
+        fee_purc_vc       TYPE  tpm_amount,           "Handling Fee on Purchase in VC
+        fee_purc_rc       TYPE  tpm_amount,           "Handling Fee on Purchase in RC
+        fee_sale_pc       TYPE  tpm_amount,           "Handling Fee on Sales in PC
+        fee_sale_vc       TYPE  tpm_amount,           "Handling Fee on Sales in VC
+        fee_sale_rc       TYPE  tpm_amount,           "Handling Fee on Sales in RC
+        cost_sale_pc      TYPE  tpm_amount,           "Cost of Sale in PC
+        cost_sale_vc      TYPE  tpm_amount,           "Cost of Sale in VC
+        cost_sale_rc      TYPE  tpm_amount,           "Cost of Sale in RC
+        sett_amt_pc       TYPE  tpm_amount,           "Settlement Amount in PC
+        sett_amt_vc       TYPE  tpm_amount,           "Settlement Amount in VC
+        sett_amt_rc       TYPE  tpm_amount,           "Settlement Amount in RC
+        rcgl_mkt_pc       TYPE  tpm_amount,           "RCG/(L) (Market) in PC
+        rcgl_mkt_vc       TYPE  tpm_amount,           "RCG/(L) (Market) in VC
+        rcgl_mkt_rc       TYPE  tpm_amount,           "RCG/(L) (Market) in RC
+        rcgl_fx_vc        TYPE  tpm_amount,           "RCG/(L) (FX) in VC
+        rcgl_fx_rc        TYPE  tpm_amount,           "RCG/(L) (FX) in RC
+        tot_rcgl_vc       TYPE  tpm_amount,           "Total RCG/(L) in VC
+        tot_rcgl_rc       TYPE  tpm_amount,           "Total RCG/(L) in RC
+* PIR9000000725 CN_RCG/L Start
+        cn_rcgl_pc        TYPE  tpm_amount,           "RCG/(L) for China
+* PIR9000000725 CN_RCG/L End
+        d_units           TYPE  fti_d_units,          "Units
+        d_nominal_amt_pc  TYPE  fti_d_nominal_amt_pc, "Nominal amount
+        dbeweg            TYPE  dbeweg,               "Flow Date
+        bustransid        TYPE  fti_bustransid,       "Identifier of the Distributor Business Transaction
+        refbustransid     TYPE  tpm_bustransid,       "Business Transaction ID
+        flow_type         TYPE  tpm_dis_flowtype,     "Update Type
+        bustranscat       TYPE  tpm_bustranscat,      "Business Transaction Category
+        gen_bustranscat   TYPE  fti_generating_bustranscat, "Generating Business Transaction Category
+*** Start of AC002+ ***
+        dbudat            TYPE budat,
+        peffzins          TYPE tb_pyield,             "Effective Interest Rate
+        sfhaart           TYPE tb_sfhaart,            "Financial Transaction Type
+        xtext             TYPE tb_fatext,             "Transaction Type Text (109/209)
+*** End of  AC002+ ***
+       END OF t_report.
+
+"itab for disposal amount
+TYPES: BEGIN OF t_disp_amt,
+        flow_type         TYPE  tpm_dis_flowtype,     "Update type
+        valuation_area    TYPE  tpm_val_area,         "Valuation Area
+        valuation_class   TYPE  tpm_val_class,        "Valuation Class
+        bustransid        TYPE  fti_bustransid,       "Identifier of the Distributor Business Transaction
+        lot_id            TYPE  tpm_lot_id,           "Lot ID
+        bustranscat       TYPE  tpm_bustranscat,      "Business Transaction Category
+        gen_bustranscat   TYPE  fti_generating_bustranscat, "Generating Business Transaction Category
+        orig_cost_pc      TYPE  tpm_amount,           "Original Cost in PC
+        orig_cost_vc      TYPE  tpm_amount,           "Original Cost in VC
+        purc_cost_pc      TYPE  tpm_amount,           "Purchase Cost in PC
+        purc_cost_vc      TYPE  tpm_amount,           "Purchase Cost in VC
+        accr_int_pc       TYPE  tpm_amount,           "Accrued Interest in PC
+        accr_int_vc       TYPE  tpm_amount,           "Accrued Interest in VC
+        fee_purc_pc       TYPE  tpm_amount,           "Handling Fee on Purchase in PC
+        fee_purc_vc       TYPE  tpm_amount,           "Handling Fee on Purchase in VC
+        fee_sale_pc       TYPE  tpm_amount,           "Handling Fee on Sales in PC
+        fee_sale_vc       TYPE  tpm_amount,           "Handling Fee on Sales in VC
+        cost_sale_pc      TYPE  tpm_amount,           "Cost of Sale in PC
+        cost_sale_vc      TYPE  tpm_amount,           "Cost of Sale in VC
+        sett_amt_pc       TYPE  tpm_amount,           "Settlement Amount in PC
+        sett_amt_vc       TYPE  tpm_amount,           "Settlement Amount in VC
+        rcgl_mkt_pc       TYPE  tpm_amount,           "RCG/(L) (Market) in PC
+        rcgl_mkt_vc       TYPE  tpm_amount,           "RCG/(L) (Market) in VC
+        rcgl_fx_vc        TYPE  tpm_amount,           "RCG/(L) (FX) in VC
+       END OF t_disp_amt.
+
+"itab for nominal amount
+TYPES: BEGIN OF t_nom_amt,
+        lot_id            TYPE tpm_lot_id,           "Lot ID
+        deal_number       TYPE fti_posrfha,          "Position-Generating Financial Transaction
+        lotgen_dealnr     TYPE fti_lotgeneration_dealnr,  "Lot-Generating Transaction Number (Listed Derivatives)
+        se_deal_number    TYPE fti_se_rfha,          "Securities/Futures Transaction
+        valuation_area    TYPE tpm_val_area,         "Valuation Area
+        valuation_class   TYPE tpm_val_class,        "Valuation Class
+        bustransid        TYPE fti_bustransid,       "Busines Transaction ID
+        refbustransid     TYPE tpm_bustransid,       "Ref.Bus. Trans ID
+*        nom_amt           TYPE tpm_amount,           "total delta nominal amount + delta units "AC003-
+        nom_amt           LIKE zznominal_amt,
+       END OF t_nom_amt.
+
+*company code name
+TYPES: BEGIN OF t_t001,
+        bukrs TYPE bukrs,
+        butxt TYPE butxt,
+       END OF t_t001.
+
+*valuation area name
+TYPES: BEGIN OF t_trgc_val_area,
+        valuation_area  TYPE tpm_val_area,
+        val_area_name   TYPE tpm_val_area_name,
+       END OF t_trgc_val_area.
+
+*portfolio name
+TYPES: BEGIN OF t_twpob,
+        bukrs   TYPE bukrs,
+        rportb  TYPE rportb,
+        xportb  TYPE vvxportb,
+       END OF t_twpob.
+
+*Business partner and assignment
+TYPES: BEGIN OF t_vtbfha,
+        bukrs   TYPE bukrs,
+        rfha    TYPE tb_rfha,
+        kontrh  TYPE tb_kunnr_new,
+        zuond   TYPE tb_zuond,
+        rfhazul TYPE tb_rfhazul,
+       END OF t_vtbfha.
+
+*Business partner name
+TYPES: BEGIN OF t_but000,
+        partner   TYPE bu_partner,
+        name_org1 TYPE bu_nameor1,
+       END OF t_but000.
+
+*Product type name
+TYPES: BEGIN OF t_tzpat,
+        gsart   TYPE vvsart,
+        ltx     TYPE text30,
+       END OF t_tzpat.
+
+*Security classification name
+TYPES: BEGIN OF t_tw22t,
+        alwpkl    TYPE alwpkl,
+        xlangbez  TYPE xlangbez,
+       END OF t_tw22t.
+
+*Security type name
+TYPES: BEGIN OF t_tw20t,
+        swerttyp  TYPE swerttyp,
+        xlangbez  TYPE xlangbez,
+       END OF t_tw20t.
+
+*Security Master name
+TYPES: BEGIN OF t_vwpanla,
+        ranl      TYPE vvranlw,
+        xallb     TYPE xallb,
+       END OF t_vwpanla.
+
+*Security additional data
+TYPES: BEGIN OF t_sec_add,
+        security_id TYPE vvranlw,
+        ny_sec_type TYPE zz_ny_sec_type,
+        mac_type    TYPE zzmac_type,
+       END OF t_sec_add.
+
+*Settlement date
+TYPES: BEGIN OF t_vtbfhapo,
+        bukrs       TYPE bukrs,
+        rfha        TYPE tb_rfha,
+        dzterm      TYPE tb_dzterm,
+        rgatt       TYPE ti_rgatt,
+        rfhazu      TYPE tb_rfhazu,
+        rkondgr     TYPE tb_rkondgr,
+        rkond       TYPE tb_kond,
+        nstufe      TYPE nstufe,
+        dbestand    TYPE tb_dbestand,
+        bnwhr       TYPE tb_bnwhr,
+        sfhazba     TYPE tb_sfhazba,
+        skoart      TYPE skoart,
+        dguel_kp    TYPE dguel_kp,
+       END OF t_vtbfhapo.
+
+*Profit center
+TYPES: BEGIN OF t_cepct,
+        prctr       TYPE prctr,
+        ktext       TYPE ktext,
+       END OF t_cepct.
+
+*coupon rate
+TYPES: BEGIN OF t_vtbfinko,
+        bukrs       TYPE bukrs,
+        rgatt       TYPE ti_rgatt,
+        rfha        TYPE tb_rfha,
+        rfhazu      TYPE tb_rfhazu,
+        rkondgr     TYPE tb_rkondgr,
+        rkond       TYPE tb_kond,
+        dguel_kp    TYPE dguel_kp,
+        nstufe      TYPE nstufe,
+        pkond       TYPE pkond,
+       END OF t_vtbfinko.
+
+*coupon rate
+TYPES: BEGIN OF t_vzzkopo,
+        mandt       TYPE mandt,
+        bukrs       TYPE bukrs,
+        sanlf       TYPE sanlf,
+        rkey1       TYPE rkey1,
+        dguel_kp    TYPE dguel_kp,
+        skoart      TYPE skoart,
+        pkond       TYPE pkond,
+       END OF t_vzzkopo.
+
+*Business Transaction ID
+TYPES: BEGIN OF t_trlt_transaction,
+        bustransid    TYPE tpm_bustransid,    "Business Transaction ID
+        refbustransid TYPE tpm_bustransid,    "Ref.Business Transaction ID
+       END OF t_trlt_transaction.
+
+*TR assign deep structure
+TYPES: BEGIN OF t_assign_deep,
+        co_flowtype       TYPE zz_co_upty,
+        dis_flowtype_tab  TYPE ztr_upty_trans_tab,
+        currency_type     TYPE zz_curr_ty,
+        ssign             TYPE tpm_pl_ssign,
+      END OF t_assign_deep.
+
+* PIR9000000725 CN_RCG/L Start
+* Persistent Flow Selectors DIFT_POS_IDENT
+TYPES: BEGIN OF t_dift,
+        os_guid           TYPE tpm_db_os_guid,
+        identified_oid    TYPE tpm_db_os_guid,
+        valuation_area    TYPE tpm_val_area,
+        valuation_class   TYPE tpm_val_class,
+        company_code      TYPE bukrs,
+        product_type      TYPE vvsart,
+        security_account  TYPE rldepo,
+        security_id       TYPE vvranlw,
+        portfolio         TYPE tpm_portfolio_diff,
+        lot_id            TYPE tpm_lot_id,
+      END OF t_dift.
+
+TYPES: BEGIN OF t_trlt_flow,
+        transaction_oid   TYPE tpm_db_os_guid,
+        trlflownumber     TYPE tpm_trlflownr,
+        sourcetarget_flg  TYPE tpm_source_target_flg,
+        flowtype          TYPE tpm_dis_flowtype,
+        amount_factor     TYPE tpm_amount_factor,
+        quant_cat         TYPE tpm_qty_pm_cat,
+        amount_cat        TYPE tpm_amt_pm_cat,
+        units             TYPE tpm_units,
+        nominal_amt       TYPE tpm_nominal_amt,
+        position_amt      TYPE tpm_position_amt,
+        position_curr     TYPE tpm_position_curr,
+        booking_state     TYPE tpm_trl_bookingstate,
+        position_oid      TYPE tpm_db_os_guid,
+        trldate           TYPE tpm_trldate,
+      END OF t_trlt_flow.
+
+TYPES: BEGIN OF t_transaction,
+        os_guid TYPE tpm_db_os_guid,
+        trldate TYPE tpm_trldate,
+        bustransid TYPE tpm_bustransid,
+        refbustransid TYPE tpm_bustransid,
+      END OF t_transaction.
+
+TYPES: BEGIN OF t_tcat_transaction,
+        canr_definition TYPE kmnr,
+        bustransid TYPE tpm_bustransid,
+       END OF t_tcat_transaction.
+
+TYPES: BEGIN OF t_vwkmko,
+        kmnr TYPE kmnr,
+        herk TYPE therk_d,
+        zaehler TYPE tzaehler,
+        nenner TYPE tnenner,
+       END OF t_vwkmko.
+
+TYPES: BEGIN OF t_cn_trs,
+        bukrs             TYPE  bukrs,                "Company code
+        valuation_area    TYPE  tpm_val_area,         "Valuation Area
+        valuation_class   TYPE  tpm_val_class,        "Valuation class
+        gsart             TYPE  vvsart,               "Product type
+        portfolio         TYPE  tpm_portfolio_diff,   "portfolio
+        security_id       TYPE  vvranlw,              "Security ID
+        deal_number       TYPE  fti_posrfha,          "Position-Generating Financial Transaction
+        security_account  TYPE  vrldepo,              "security account
+        lot_id            TYPE  tpm_lot_id,           "Lot ID
+        lotgen_dealnr     TYPE  fti_lotgeneration_dealnr, "Lot-Generating Transaction Number (Listed Derivatives)
+        sanlf             TYPE  sanlf,                "Product Category
+        sbwhr             TYPE  tb_bwhr,              "Position Currency
+        dbeweg            TYPE  dbeweg,               "Flow Date
+        dbestand          TYPE  dbestand,             "Position value date
+        se_deal_number    TYPE  fti_se_rfha,          "Securities/Futures Transaction
+        rkontra           TYPE  rkontra_new,          "Reference to Counterparty
+        flow_type         TYPE  tpm_dis_flowtype,     "Update Type
+        bustranscat       TYPE  tpm_bustranscat,      "Business Transaction Category
+        gen_bustranscat   TYPE  fti_generating_bustranscat, "Generating Business Transaction Category
+        sourcetarget_flg  TYPE  tpm_source_target_flg,  "Indicator: Source or Target of a Flow
+        bustransid        TYPE  fti_bustransid,       "Identifier of the Distributor Business Transaction
+        quant_cat         TYPE  fti_qty_pm_cat,       "Position Change Category: Quantity
+        amount_cat        TYPE  fti_amt_pm_cat,       "Position Change Category
+        kmnr              TYPE  kmnr,                 "Corporate Action Number
+        d_units           TYPE  fti_d_units,          "Units
+        d_nominal_amt_pc  TYPE  fti_d_nominal_amt_pc, "Nominal amount
+        d_aqu_val_pc      TYPE  fti_d_aqu_val_pc,     "Delta Acquisition Value in Position Currency
+        d_book_val_pc     TYPE  fti_d_book_val_pc,    "Delta Book Value in Position Currency
+        d_amount_pc       TYPE  fti_d_amount_pc,      "Flow Amount in Position Currency
+      END OF t_cn_trs.
+
+TYPES: t_trlt_flow_tab TYPE TABLE OF t_trlt_flow.
+* PIR9000000725 CN_RCG/L End
+
+*** Start of AC002+ ***
+*Effective Interest Rate
+TYPES: BEGIN OF t_peffzins,
+         bukrs TYPE bukrs,
+         rfha  TYPE tb_rfha,
+         peffzins TYPE tb_pyield,
+       END OF t_peffzins.
+
+TYPES: BEGIN OF t_at10t,
+         sgsart  TYPE vvsart,
+         sfhaart TYPE tb_sfhaart,
+         xtext   TYPE tb_fatext,
+       END OF t_at10t.
+*** End of  AC002+ ***
+*-----------------------------------------------------------------------
+* INTERNAL TABLES
+*-----------------------------------------------------------------------
+DATA i_tr_assign        TYPE STANDARD TABLE OF ztr_tr_assign INITIAL SIZE 640.     "Transaction Assign. for mapping
+DATA i_assign_deep      TYPE STANDARD TABLE OF t_assign_deep.
+DATA i_periods          TYPE STANDARD TABLE OF t_report.         "itab to store all periods records
+DATA i_disp_amt         TYPE STANDARD TABLE OF t_disp_amt.       "itab to store all disposal amount
+DATA i_nom_amt          TYPE STANDARD TABLE OF t_nom_amt.        "itab to store total nominal amount per transaction number
+DATA i_output           TYPE STANDARD TABLE OF t_report.         "itab to store all data that will be displayed
+DATA i_t001             TYPE STANDARD TABLE OF t_t001.           "company code name
+DATA i_trgc_val_area    TYPE TABLE OF t_trgc_val_area.           "valuation area name
+DATA i_trgc_val_class_t TYPE TABLE OF trgc_val_class_t.           "valuation class name
+DATA i_twpob            TYPE STANDARD TABLE OF t_twpob.          "portfolio name
+DATA i_vtbfha           TYPE STANDARD TABLE OF t_vtbfha.         "BP and Assignment
+DATA i_but000           TYPE STANDARD TABLE OF t_but000.         "Business Partner name
+DATA i_tzpat            TYPE STANDARD TABLE OF t_tzpat.          "Product type name
+DATA i_tw22t            TYPE STANDARD TABLE OF t_tw22t.          "Security Classification name
+DATA i_tw20t            TYPE STANDARD TABLE OF t_tw20t.          "Security Type name
+DATA i_vwpanla          TYPE STANDARD TABLE OF t_vwpanla.        "Security master name
+DATA i_sec_add          TYPE STANDARD TABLE OF t_sec_add INITIAL SIZE 850.        "Security Additional Data
+DATA i_vtbfhapo         TYPE STANDARD TABLE OF t_vtbfhapo.       "Settlement date
+DATA i_portfolio        TYPE STANDARD TABLE OF ztr_portfolio.     "Profit center
+DATA i_zstatlob         TYPE STANDARD TABLE OF zstatlob.          "HK Regulatory LOB description
+DATA i_zifrscd          TYPE STANDARD TABLE OF zifrscd.           "IFRS description
+DATA i_zlocallob        TYPE STANDARD TABLE OF zlocallob.         "Local Regulatory LOB description
+DATA i_zgaapcd          TYPE STANDARD TABLE OF zgaapcd.           "GAAP code description
+DATA i_cepct            TYPE STANDARD TABLE OF t_cepct.          "profit center description
+DATA i_vtbfinko         TYPE STANDARD TABLE OF t_vtbfinko.       "coupon rate
+DATA i_vzzkopo          TYPE STANDARD TABLE OF t_vzzkopo.        "coupon rate
+DATA i_trlt_transaction TYPE STANDARD TABLE OF t_trlt_transaction. "Ref.Busines Transaction ID
+DATA i_tcurx            TYPE TABLE OF tcurx INITIAL SIZE 70.      "decimal currency
+*DATA I_EVENTS           TYPE SLIS_T_EVENT.                        "event for alv layout CR237
+*DATA I_FIELDCAT         TYPE SLIS_T_FIELDCAT_ALV.                 "field catalog CR237
+DATA i_extract1         LIKE disextract.
+DATA i_extract2         LIKE disextract.
+"for LDB retrieval
+DATA: i_selections       TYPE rsfs_fields.
+DATA: i_ldbcb            TYPE TABLE OF ldbcb WITH HEADER LINE.
+DATA: i_callback         TYPE TABLE OF ldbcb.
+DATA: i_seltab           TYPE TABLE OF rsparams.
+* PIR9000000725 CN_RCG/L Start
+DATA: i_dift             TYPE TABLE OF t_dift.
+DATA: i_cn_trs           TYPE TABLE OF t_cn_trs.
+DATA: i_ztr_cn_trs       TYPE TABLE OF ztr_cn_trs.
+* PIR9000000725 CN_RCG/L End
+DATA: i_peffzins         TYPE TABLE OF t_peffzins. "AC002+
+DATA: i_at10t            TYPE STANDARD TABLE OF t_at10t. "AC002+
+
+*** Start of AC003+ ***
+DATA: w_excel       TYPE zbc_excel_data,
+      i_excel       TYPE ztt_excel_data,
+      w_border(4)   TYPE c.
+DATA: w_doc_type(3),
+      w_xml_table  TYPE solix_tab,
+      w_xml_size   TYPE i,
+      w_text       TYPE c LENGTH 60.
+  DEFINE insert_cell.
+    CLEAR w_excel.
+    move &1            to w_excel-sheet_nro.
+    move &2            to w_excel-row_nro.
+    move &3            to w_excel-column_nro.
+    move &4            to w_excel-value.
+    move &5            to w_excel-bold.
+    move &6            to w_excel-justify.
+    move &7            to w_excel-numberformat.
+    move &8            to w_border.
+    move w_border+0(1) to w_excel-border_top.
+    move w_border+1(1) to w_excel-border_right.
+    move w_border+2(1) to w_excel-border_bottom.
+    move w_border+3(1) to w_excel-border_left.
+    move &9            to w_excel-back_color.
+    append w_excel to i_excel.
+  END-OF-DEFINITION.
+*** End of  AC003+ ***
+*-----------------------------------------------------------------------
+* WORK AREA
+*-----------------------------------------------------------------------
+DATA w_periods  TYPE t_report.
+* PIR9000000725 CN_RCG/L Start
+DATA w_cn_trs TYPE t_cn_trs.
+DATA w_seq_no TYPE zz_sno.
+* PIR9000000725 CN_RCG/L End
+DATA: w_peffzins TYPE t_peffzins,
+      w_at10t    TYPE t_at10t.
+*DATA: W_LAYOUT   TYPE  SLIS_LAYOUT_ALV,          "CR237
+*      W_EVENTS   TYPE  SLIS_ALV_EVENT,           "CR237
+*      W_FIELDCAT TYPE SLIS_FIELDCAT_ALV.         "CR237
+
+****data declaration for delete buffer in order to decrease memory used
+**class CL_OS_SYSTEM definition load.
+**data TM type ref to IF_OS_TRANSACTION_MANAGER.
+**data T  type ref to IF_OS_TRANSACTION.
+**
+***----------------------------------------------------------------------*
+***       CLASS TH DEFINITION
+***----------------------------------------------------------------------*
+*** definition of class TH that contain methods handle for event finished
+***----------------------------------------------------------------------*
+**CLASS TH DEFINITION.                                        "#EC *
+**  PUBLIC SECTION.
+**    methods HANDLE for event FINISHED of IF_OS_TRANSACTION
+**                   importing STATUS.
+**ENDCLASS.                    "TH DEFINITION
+**
+***----------------------------------------------------------------------*
+***       CLASS TH IMPLEMENTATION
+***----------------------------------------------------------------------*
+*** class implementation for class TH
+***----------------------------------------------------------------------*
+**CLASS TH IMPLEMENTATION.
+**  METHOD HANDLE.
+**    IF STATUS = OSCON_TSTATUS_FIN_SUCCESS.                  "#EC NEEDED
+**      "do nothing
+**    ENDIF.
+**  ENDMETHOD.                    "HANDLE
+**ENDCLASS.                    "TH IMPLEMENTATION
+**
+**DATA H TYPE REF TO TH.
+
+*----------------------------------------------------------------------*
+*                      SELECTION PARAMETER                             *
+*----------------------------------------------------------------------*
+"product groups
+SELECTION-SCREEN BEGIN OF BLOCK frame1 WITH FRAME TITLE text-001.
+SELECTION-SCREEN BEGIN OF LINE.
+PARAMETER: p_jsep   TYPE fti_ldb_tr_parameters-flg_se DEFAULT 'X'.
+SELECTION-SCREEN COMMENT 3(30) text-sec FOR FIELD p_jsep.
+PARAMETER: p_jotcp  TYPE fti_ldb_tr_parameters-flg_otc.
+SELECTION-SCREEN COMMENT 40(50) text-otc FOR FIELD p_jotcp.
+SELECTION-SCREEN END   OF LINE.
+SELECTION-SCREEN BEGIN OF LINE.
+PARAMETER: p_jlop   TYPE fti_ldb_tr_parameters-flg_lo.
+SELECTION-SCREEN COMMENT 3(30) text-jlo FOR FIELD p_jlop.
+PARAMETER: p_jlofp  TYPE fti_ldb_tr_parameters-flg_lof.
+SELECTION-SCREEN COMMENT 40(50) text-jlf FOR FIELD p_jlofp.
+SELECTION-SCREEN END   OF LINE.
+SELECTION-SCREEN END  OF BLOCK frame1.
+
+"general selection
+SELECTION-SCREEN BEGIN OF BLOCK frame2 WITH FRAME TITLE text-002.
+SELECT-OPTIONS: s_bukr FOR fti_ldb_tr_periods-bukrs.
+SELECT-OPTIONS: s_va FOR fti_ldb_tr_periods-valuation_area.
+SELECT-OPTIONS: s_vc FOR fti_ldb_tr_periods-valuation_class.
+SELECT-OPTIONS: s_gsartp FOR fti_ldb_tr_periods-gsart.
+SELECT-OPTIONS: s_rfhap  FOR fti_ldb_tr_periods-deal_number.
+SELECTION-SCREEN SKIP.
+SELECTION-SCREEN BEGIN OF BLOCK se WITH FRAME TITLE text-sec.
+SELECT-OPTIONS: s_ranlp FOR fti_ldb_tr_periods-security_id.
+SELECT-OPTIONS: s_rldep FOR fti_ldb_tr_periods-security_account.
+SELECT-OPTIONS: s_port FOR fti_ldb_tr_periods-portfolio.
+SELECTION-SCREEN END OF BLOCK se.
+SELECTION-SCREEN BEGIN OF BLOCK otc WITH FRAME TITLE text-otc.
+SELECT-OPTIONS: s_portt  FOR fti_ldb_tr_periods-portfolio_tm.
+SELECTION-SCREEN END OF BLOCK otc.
+SELECTION-SCREEN END OF BLOCK frame2.
+
+"control parameter
+SELECTION-SCREEN BEGIN OF BLOCK frame3 WITH FRAME TITLE text-003.
+SELECT-OPTIONS: s_date FOR fti_ldb_tr_periods-dbeweg OBLIGATORY
+                DEFAULT sy-datum TO sy-datum
+                NO-EXTENSION.
+SELECTION-SCREEN BEGIN OF LINE.
+PARAMETERS: p_expl AS CHECKBOX.
+SELECTION-SCREEN COMMENT 4(20) text-cb4 FOR FIELD p_expl.
+SELECTION-SCREEN END OF LINE.
+SELECTION-SCREEN END OF BLOCK frame3.
+
+"currency type
+SELECTION-SCREEN BEGIN OF BLOCK frame4 WITH FRAME TITLE text-003.
+SELECTION-SCREEN BEGIN OF LINE.
+PARAMETERS: p_pos AS CHECKBOX DEFAULT 'X'.
+SELECTION-SCREEN COMMENT 4(20) text-cb1 FOR FIELD p_pos.
+PARAMETERS: p_val AS CHECKBOX DEFAULT 'X'.
+SELECTION-SCREEN COMMENT 26(20) text-cb2 FOR FIELD p_val.
+PARAMETERS: p_rep AS CHECKBOX DEFAULT 'X'.
+SELECTION-SCREEN COMMENT 48(20) text-cb3 FOR FIELD p_rep.
+SELECTION-SCREEN END OF LINE.
+SELECTION-SCREEN END OF BLOCK frame4.
+
+*** Start of AC003+ ***
+"email
+SELECTION-SCREEN BEGIN OF BLOCK email WITH FRAME TITLE text-005.
+SELECTION-SCREEN BEGIN OF LINE.
+SELECTION-SCREEN COMMENT 1(17) text-s01 FOR FIELD p_esend.
+SELECTION-SCREEN POSITION 25.
+PARAMETERS: p_esend AS CHECKBOX.
+SELECTION-SCREEN END OF LINE.
+SELECT-OPTIONS: s_bname FOR adr6-smtp_addr NO INTERVALS.
+SELECTION-SCREEN END   OF BLOCK email.
+*** End of  AC003+ ***
+
+"extract function
+SELECTION-SCREEN BEGIN OF BLOCK extract WITH FRAME TITLE text-ext.
+SELECTION-SCREEN BEGIN OF LINE.
+PARAMETERS: p_noex RADIOBUTTON GROUP extr MODIF ID rep.
+SELECTION-SCREEN COMMENT 3(50) text-ex1 FOR FIELD p_noex MODIF ID rep.
+SELECTION-SCREEN END OF LINE.
+
+SELECTION-SCREEN BEGIN OF LINE.
+PARAMETERS: p_save RADIOBUTTON GROUP extr MODIF ID rep.
+SELECTION-SCREEN COMMENT 3(50) text-ex3 FOR FIELD p_save MODIF ID rep.
+SELECTION-SCREEN END OF LINE.
+
+SELECTION-SCREEN BEGIN OF LINE.
+SELECTION-SCREEN COMMENT 3(29) text-ex2 FOR FIELD p_ex1 MODIF ID rep.
+PARAMETERS: p_ex1 LIKE ltex-exname MODIF ID rep.
+SELECTION-SCREEN END OF LINE.
+SELECTION-SCREEN BEGIN OF LINE.
+SELECTION-SCREEN COMMENT 3(29) text-ex5 FOR FIELD p_ext1 MODIF ID rep.
+PARAMETERS: p_ext1 LIKE ltex-text MODIF ID rep.
+SELECTION-SCREEN END OF LINE.
+
+SELECTION-SCREEN BEGIN OF LINE.
+PARAMETERS: p_load RADIOBUTTON GROUP extr MODIF ID rep.
+SELECTION-SCREEN COMMENT 3(50) text-ex4 FOR FIELD p_load MODIF ID rep.
+SELECTION-SCREEN END OF LINE.
+
+SELECTION-SCREEN BEGIN OF LINE.
+SELECTION-SCREEN COMMENT 3(29) text-ex2 FOR FIELD p_ex2 MODIF ID rep.
+PARAMETERS: p_ex2 LIKE ltex-exname MODIF ID rep.
+SELECTION-SCREEN COMMENT 47(40) p_ext2 FOR FIELD p_ex2 MODIF ID rep.
+SELECTION-SCREEN END OF LINE.
+SELECTION-SCREEN END OF BLOCK extract.
+
+*----------------------------------------------------------------------*
+*                      AT SELECTION-SCREEN                             *
+*----------------------------------------------------------------------*
+AT SELECTION-SCREEN OUTPUT.
+* modify selection screen
+  PERFORM modify_sel_screen.
+
+AT SELECTION-SCREEN.
+* at least one of product groups have to selected
+  IF p_jsep IS INITIAL
+    AND p_jotcp IS INITIAL
+    AND p_jlop IS INITIAL
+    AND p_jlofp IS INITIAL
+    AND p_load IS INITIAL.
+    MESSAGE s001(ztr_mc_r0004).   "no position selected
+    LEAVE SCREEN.
+  ENDIF.
+
+  PERFORM check_input_date.
+
+* authorisation check
+  DATA li_bukrs TYPE TABLE OF t_t001.
+  DATA lw_bukrs TYPE t_t001.
+  SELECT bukrs butxt FROM t001
+    INTO TABLE li_bukrs
+    WHERE bukrs IN s_bukr.
+  IF sy-subrc IS INITIAL.
+    SORT li_bukrs BY bukrs.
+  ENDIF.
+  LOOP AT li_bukrs INTO lw_bukrs.
+    AUTHORITY-CHECK OBJECT 'T_FTI_LDB'
+                    ID 'BUKRS' FIELD lw_bukrs-bukrs
+                    ID 'VAL_AREA' DUMMY
+                    ID 'VVSART' DUMMY.
+    IF sy-subrc = 4.
+      MESSAGE e004(ztr_mc_r0004) WITH lw_bukrs-bukrs. "No authorization for company code
+    ELSEIF sy-subrc <> 0.
+      MESSAGE e005(ztr_mc_r0004) WITH lw_bukrs-bukrs. "Authorization check failed for company code
+    ENDIF.
+  ENDLOOP.
+  CLEAR: lw_bukrs, li_bukrs.
+
+  CALL FUNCTION 'REUSE_ALV_EXTRACT_AT_SELSCREEN'
+    EXPORTING
+      i_p_save    = p_save
+      i_p_load    = p_load
+    CHANGING
+      c_p_ex1     = p_ex1
+      c_p_ex2     = p_ex2
+      c_p_ext1    = p_ext1
+      c_p_ext2    = p_ext2
+      cs_extract1 = i_extract1
+      cs_extract2 = i_extract2.
+
+* Process on value request
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_ex1.
+  CALL FUNCTION 'REUSE_ALV_EXTRACT_AT_F4_P_EX1'
+    CHANGING
+      c_p_ex1     = p_ex1
+      c_p_ext1    = p_ext1
+      cs_extract1 = i_extract1.
+
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_ex2.
+  CALL FUNCTION 'REUSE_ALV_EXTRACT_AT_F4_P_EX2'
+    CHANGING
+      c_p_ex2     = p_ex2
+      c_p_ext2    = p_ext2
+      cs_extract2 = i_extract2.
+
+*----------------------------------------------------------------------*
+*                        INITIALIZATION                                *
+*----------------------------------------------------------------------*
+INITIALIZATION.
+
+  CALL FUNCTION 'REUSE_ALV_EXTRACT_AT_INIT'
+    CHANGING
+      cs_extract1 = i_extract1
+      cs_extract2 = i_extract2.
+
+*----------------------------------------------------------------------*
+*                  T O P - O F - P A G E .                             *
+*----------------------------------------------------------------------*
+*TOP-OF-PAGE.
+*  PERFORM TOP_OF_PAGE.               "CR237
+
+LOAD-OF-PROGRAM.
+*  CL_OS_SYSTEM=>INIT_AND_SET_MODES( I_EXTERNAL_COMMIT = OSCON_FALSE
+*                                I_UPDATE_MODE = OSCON_DMODE_DEFAULT ).
+
+*----------------------------------------------------------------------*
+*                        START-OF-SELECTION                            *
+*----------------------------------------------------------------------*
+START-OF-SELECTION.
+
+  IF p_load IS INITIAL.
+    PERFORM get_tr_assign.
+    PERFORM get_curr.
+    PERFORM prepare_selection.
+    PERFORM get_ldb.
+*** Start of AC002+ ***
+    SORT i_periods BY dbudat.
+    DELETE i_periods WHERE dbudat EQ '00000000' AND flow_type+0(2) EQ 'DT'.
+*** End of  AC002+ ***
+    IF i_periods IS NOT INITIAL.
+      PERFORM get_data.
+      PERFORM set_data.
+    ENDIF.
+  ENDIF.
+
+*---------------------------------------------------------------*
+* END-OF-SELECTION
+*---------------------------------------------------------------*
+END-OF-SELECTION.
+
+  IF p_save = 'X'.
+    CALL FUNCTION 'REUSE_ALV_EXTRACT_SAVE'
+      EXPORTING
+        is_extract     = i_extract1
+        i_get_selinfos = 'X'
+        i_exp01        = s_date
+      TABLES
+        it_exp01       = i_output.
+
+*** Start of AC003+ ***
+    IF i_output IS NOT INITIAL.
+    IF p_esend IS NOT INITIAL AND s_bname IS NOT INITIAL.
+      PERFORM init_alv.
+      PERFORM send_email.
+    ENDIF.
+    ENDIF.
+*** End of  AC003+ ***
+    EXIT.
+  ENDIF.
+  IF p_load = 'X'.
+    CALL FUNCTION 'REUSE_ALV_EXTRACT_LOAD'
+      EXPORTING
+        is_extract = i_extract2
+      TABLES
+        et_exp01   = i_output
+      CHANGING
+        c_exp01    = s_date.
+  ENDIF.
+
+  IF p_save IS INITIAL.
+    IF i_output IS NOT INITIAL.
+*      PERFORM DISPLAY_DATA.       "CR237
+      PERFORM display_alv.         "CR237
+
+    ELSE.
+      MESSAGE s003(ztr_mc_r0004). "No data was selected
+    ENDIF.
+  ENDIF.
+
+*&---------------------------------------------------------------------*
+*&      Form  MODIFY_SEL_SCREEN
+*&---------------------------------------------------------------------*
+*       Modify Selection Screen
+*----------------------------------------------------------------------*
+FORM modify_sel_screen .
+  LOOP AT SCREEN.
+    IF screen-group2 = c_ldb_dbs.
+      screen-active = '0'.
+      MODIFY SCREEN.
+    ENDIF.
+  ENDLOOP.
+ENDFORM.                    " MODIFY_SEL_SCREEN
+*&---------------------------------------------------------------------*
+*&      Form  CHECK_INPUT_DATE
+*&---------------------------------------------------------------------*
+*       Check Input Date
+*----------------------------------------------------------------------*
+FORM check_input_date .
+
+  READ TABLE s_date INTO s_date INDEX 1.
+  IF s_date-low IS INITIAL OR
+     s_date-high IS INITIAL.
+    MESSAGE e002(ztr_mc_r0004). "Enter a valid position ledger date
+  ENDIF.
+
+ENDFORM.                    " CHECK_INPUT_DATE
+*&---------------------------------------------------------------------*
+*&      Form  PREPARE_SELECTION
+*&---------------------------------------------------------------------*
+*       Prepare selection
+*----------------------------------------------------------------------*
+FORM prepare_selection .
+
+  DATA: lw_callback          LIKE LINE OF i_callback.
+  DATA: lw_seltab            LIKE LINE OF i_seltab.
+  CLEAR lw_callback.
+  PERFORM init_getlist TABLES i_ldbcb CHANGING i_selections.
+  lw_callback-ldbnode     = 'PERIODS'.
+  lw_callback-get         = 'X'.
+  lw_callback-get_late    = ' '.
+  lw_callback-cb_prog     = sy-repid.
+  lw_callback-cb_form     = 'CALLBACK_PERIODS'.
+  APPEND lw_callback TO i_callback.
+
+* check product group SECURITY, OTC and DE
+  lw_seltab-kind = 'P'.
+  "lw_seltab-selname = 'P_JSE'. "AC001-
+  lw_seltab-selname = 'P_SEC'.  "AC001+
+  lw_seltab-sign = 'I'.
+  lw_seltab-option = 'EQ'.
+  lw_seltab-low = p_jsep.
+  APPEND lw_seltab TO i_seltab.
+
+  lw_seltab-kind = 'P'.
+  "lw_seltab-selname = 'P_JOTC'. "AC001-
+  lw_seltab-selname = 'P_POS'.   "AC001+
+  lw_seltab-sign = 'I'.
+  lw_seltab-option = 'EQ'.
+  lw_seltab-low = p_jotcp.
+  APPEND lw_seltab TO i_seltab.
+
+  lw_seltab-kind = 'P'.
+  "lw_seltab-selname = 'P_JLO'.  "AC001-
+  lw_seltab-selname = 'P_LOA'.   "AC001+
+  lw_seltab-sign = 'I'.
+  lw_seltab-option = 'EQ'.
+  lw_seltab-low = p_jlop.
+  APPEND lw_seltab TO i_seltab.
+
+  lw_seltab-kind = 'P'.
+  "lw_seltab-selname = 'P_JLOF'.  "AC001-
+  lw_seltab-selname = 'P_DEA'.   "AC001+
+  lw_seltab-sign = 'I'.
+  lw_seltab-option = 'EQ'.
+  lw_seltab-low = p_jlofp.
+  APPEND lw_seltab TO i_seltab.
+
+  lw_seltab-kind = 'P'.
+  lw_seltab-selname = 'P_EXPLAN'.
+  lw_seltab-sign = 'I'.
+  lw_seltab-option = 'EQ'.
+  lw_seltab-low = p_expl.
+  APPEND lw_seltab TO i_seltab.
+
+  lw_seltab-kind = 'P'.
+  lw_seltab-selname = 'P_RST_PB'.
+  lw_seltab-sign = 'I'.
+  lw_seltab-option = 'EQ'.
+  lw_seltab-low = '1'.
+  APPEND lw_seltab TO i_seltab.
+
+* Set company code
+  lw_seltab-kind = 'S'.
+  lw_seltab-selname = 'S_BUKRS'.
+  LOOP AT s_bukr.
+    MOVE-CORRESPONDING s_bukr TO lw_seltab.
+    APPEND lw_seltab TO i_seltab.
+  ENDLOOP.
+
+* set valuation area
+  lw_seltab-kind = 'S'.
+  lw_seltab-selname = 'S_VLAREA'.
+  LOOP AT s_va.
+    MOVE-CORRESPONDING s_va TO lw_seltab.
+    APPEND lw_seltab TO i_seltab.
+  ENDLOOP.
+
+* set valuation class
+  lw_seltab-kind = 'S'.
+  lw_seltab-selname = 'S_VALCLS'.
+  LOOP AT s_vc.
+    MOVE-CORRESPONDING s_vc TO lw_seltab.
+    APPEND lw_seltab TO i_seltab.
+  ENDLOOP.
+
+* set product type
+  lw_seltab-kind = 'S'.
+  lw_seltab-selname = 'S_GSART'.
+  LOOP AT s_gsartp.
+    MOVE-CORRESPONDING s_gsartp TO lw_seltab.
+    APPEND lw_seltab TO i_seltab.
+  ENDLOOP.
+
+* set transaction
+  lw_seltab-kind = 'S'.
+  lw_seltab-selname = 'S_RFHA'.
+  LOOP AT s_rfhap.
+    MOVE-CORRESPONDING s_rfhap TO lw_seltab.
+    APPEND lw_seltab TO i_seltab.
+  ENDLOOP.
+
+  IF p_jsep IS NOT INITIAL.
+*   set security ID
+    lw_seltab-kind = 'S'.
+    lw_seltab-selname = 'S_RANLSE'.
+    LOOP AT s_ranlp.
+      MOVE-CORRESPONDING s_ranlp TO lw_seltab.
+      APPEND lw_seltab TO i_seltab.
+    ENDLOOP.
+*   set securities account
+    lw_seltab-kind = 'S'.
+    lw_seltab-selname = 'S_RLDEPO'.
+    LOOP AT s_rldep.
+      MOVE-CORRESPONDING s_rldep TO lw_seltab.
+      APPEND lw_seltab TO i_seltab.
+    ENDLOOP.
+*   set portfolio (position)
+    lw_seltab-kind = 'S'.
+    lw_seltab-selname = 'S_RPORTB'.
+    LOOP AT s_port.
+      MOVE-CORRESPONDING s_port TO lw_seltab.
+      APPEND lw_seltab TO i_seltab.
+    ENDLOOP.
+  ENDIF.
+
+* set portfolio
+  IF p_jotcp IS NOT INITIAL.
+    lw_seltab-kind = 'S'.
+    lw_seltab-selname = 'S_PORTTM'.
+    LOOP AT s_portt.
+      MOVE-CORRESPONDING s_portt TO lw_seltab.
+      APPEND lw_seltab TO i_seltab.
+    ENDLOOP.
+  ENDIF.
+
+* set selection period
+  lw_seltab-kind = 'S'.
+  lw_seltab-selname = 'S_PERIOD'.
+  lw_seltab-sign = 'I'.
+  lw_seltab-option = 'BT'.
+  lw_seltab-low = s_date-low.
+  lw_seltab-high = s_date-high.
+  APPEND lw_seltab TO i_seltab.
+
+* Added for EHP5 Upgrade - KSCSP56 20120116
+  lw_seltab-kind = 'P'.
+  lw_seltab-selname = 'P_BILSTF '. "Flows: Remaining Term
+  lw_seltab-sign = 'I'.
+  lw_seltab-option = 'EQ'.
+  lw_seltab-low = '2'. "today
+  APPEND lw_seltab TO i_seltab.
+* end add
+
+ENDFORM.                    " PREPARE_SELECTION
+*&---------------------------------------------------------------------*
+*&      Form  INIT_GETLIST
+*&---------------------------------------------------------------------*
+*       Confirm the fields need to be extracted from LDB
+*----------------------------------------------------------------------*
+FORM init_getlist
+     TABLES   ptr_ldbcb STRUCTURE ldbcb
+     CHANGING pte_fieldselection TYPE rsfs_fields.
+
+  STATICS: lw_fieldselection LIKE LINE OF pte_fieldselection,
+           lw_fields LIKE LINE OF lw_fieldselection-fields.
+
+*---- Fill table of DB nodes
+  ptr_ldbcb-ldbnode = 'PERIODS'.
+  ptr_ldbcb-get = 'X'.
+  ptr_ldbcb-get_late = ' '.
+  ptr_ldbcb-cb_prog = sy-repid.
+  ptr_ldbcb-cb_form = 'CALLBACK_PERIODS'.
+  APPEND ptr_ldbcb.
+*---- Fill Selected Fields
+  lw_fieldselection-tablename = 'PERIODS'.
+  lw_fields-line = 'BUKRS'.
+  APPEND lw_fields TO lw_fieldselection-fields.
+  lw_fields-line = 'VALUATION_AREA'.
+  APPEND lw_fields TO lw_fieldselection-fields.
+  lw_fields-line = 'VALUATION_CLASS'.
+  APPEND lw_fields TO lw_fieldselection-fields.
+  lw_fields-line = 'GSART'.
+  APPEND lw_fields TO lw_fieldselection-fields.
+  lw_fields-line = 'PORTFOLIO'.
+  APPEND lw_fields TO lw_fieldselection-fields.
+  lw_fields-line = 'SECURITY_ID'.
+  APPEND lw_fields TO lw_fieldselection-fields.
+  lw_fields-line = 'DEAL_NUMBER'.
+  APPEND lw_fields TO lw_fieldselection-fields.
+  lw_fields-line = 'SECURITY_ACCOUNT'.
+  APPEND lw_fields TO lw_fieldselection-fields.
+  lw_fields-line = 'LOT_ID'.
+  APPEND lw_fields TO lw_fieldselection-fields.
+  lw_fields-line = 'LOTGEN_DEALNR'.
+  APPEND lw_fields TO lw_fieldselection-fields.
+  lw_fields-line = 'DELFZ'.
+  APPEND lw_fields TO lw_fieldselection-fields.
+  lw_fields-line = 'PORTFOLIO_TM'.
+  APPEND lw_fields TO lw_fieldselection-fields.
+  lw_fields-line = 'ALWPKL'.
+  APPEND lw_fields TO lw_fieldselection-fields.
+  lw_fields-line = 'SWERTTYP'.
+  APPEND lw_fields TO lw_fieldselection-fields.
+  lw_fields-line = 'SE_DEAL_NUMBER'.
+  APPEND lw_fields TO lw_fieldselection-fields.
+  lw_fields-line = 'D_BOOK_VAL_PC'.
+  APPEND lw_fields TO lw_fieldselection-fields.
+  lw_fields-line = 'D_BOOK_VAL_VC'.
+  APPEND lw_fields TO lw_fieldselection-fields.
+  lw_fields-line = 'GEN_BUSTRANSCAT'.
+  APPEND lw_fields TO lw_fieldselection-fields.
+  lw_fields-line = 'BUSTRANSID'.
+  APPEND lw_fields TO lw_fieldselection-fields.
+  lw_fields-line = 'D_UNITS'.
+  APPEND lw_fields TO lw_fieldselection-fields.
+  lw_fields-line = 'D_NOMINAL_AMT_PC'.
+  APPEND lw_fields TO lw_fieldselection-fields.
+  lw_fields-line = 'D_AMOUNT_PC'.
+  APPEND lw_fields TO lw_fieldselection-fields.
+  lw_fields-line = 'D_AMOUNT_VC'.
+  APPEND lw_fields TO lw_fieldselection-fields.
+* PIR9000000725 CN_RCG/L Start
+  lw_fields-line = 'SANLF'.
+  APPEND lw_fields TO lw_fieldselection-fields.
+  lw_fields-line = 'AMOUNT_CAT'.
+  APPEND lw_fields TO lw_fieldselection-fields.
+  lw_fields-line = 'RKONTRA'.
+  APPEND lw_fields TO lw_fieldselection-fields.
+*** Start of AC002+ ***
+  lw_fields-line = 'DBUDAT'.
+  APPEND lw_fields TO lw_fieldselection-fields.
+  lw_fields-line = 'FLOW_TYPE'.
+  APPEND lw_fields TO lw_fieldselection-fields.
+*** End of  AC002+ ***
+* PIR9000000725 CN_RCG/L End
+  APPEND lw_fieldselection TO pte_fieldselection.
+
+ENDFORM.                    " INIT_GETLIST
+*&---------------------------------------------------------------------*
+*&      Form  GET_LDB
+*&---------------------------------------------------------------------*
+*       get LDB PERIODS data
+*----------------------------------------------------------------------*
+FORM get_ldb .
+
+  CALL FUNCTION 'LDB_PROCESS'
+    EXPORTING
+      ldbname                     = 'FTI_TR_PERIODS'
+      variant                     = ' '
+*     EXPRESSIONS                 = TEXPR
+      field_selection             = i_selections
+    TABLES
+      callback                    = i_callback
+      selections                  = i_seltab
+    EXCEPTIONS
+      ldb_not_reentrant           = 1
+      ldb_incorrect               = 2
+      ldb_already_running         = 3
+      ldb_error                   = 4
+      ldb_selections_error        = 5
+      ldb_selections_not_accepted = 6
+      variant_not_existent        = 7
+      variant_obsolete            = 8
+      variant_error               = 9
+      free_selections_error       = 10
+      callback_no_event           = 11
+      callback_node_duplicate     = 12
+      OTHERS                      = 13.
+  IF sy-subrc <> 0.
+    MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+            WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+  ENDIF.
+
+  DELETE ADJACENT DUPLICATES FROM i_periods COMPARING ALL FIELDS.
+
+ENDFORM.                    " GET_LDB
+*&---------------------------------------------------------------------*
+*&      Form  callback_periods
+*&---------------------------------------------------------------------*
+*       fill the return of LDB to internal table
+*----------------------------------------------------------------------*
+FORM callback_periods USING name  TYPE ldbn-ldbnode         "#EC NEEDED
+                          wa    TYPE fti_ldb_tr_periods     "#EC NEEDED
+                          evt   TYPE c                      "#EC NEEDED
+                          check TYPE c.                     "#EC CALLED
+
+  DATA lw_disp_amt       TYPE t_disp_amt.
+  DATA lw_nom_amt        TYPE t_nom_amt.
+  DATA lw_tr_assign      TYPE ztr_tr_assign.
+  DATA lw_flag           TYPE c LENGTH 1.
+  DATA lw_d_book_val_pc  TYPE tpm_amount.
+  DATA lw_d_book_val_vc  TYPE tpm_amount.
+  DATA lw_d_amount_pc    TYPE tpm_amount.
+  DATA lw_d_amount_vc    TYPE tpm_amount.
+  DATA lw_assign_deep    TYPE t_assign_deep.
+  DATA lw_upty           TYPE ztr_upty_trans.
+* PIR9000000725 CN_RCG/L Start
+  DATA lw_cn_trs         TYPE t_cn_trs.
+  CONSTANTS lc_bustranscat    TYPE tpm_bustranscat VALUE '0000'.
+  CONSTANTS lc_va_104         TYPE tpm_val_area VALUE '104'.
+  CONSTANTS lc_sanlf_010      TYPE sanlf VALUE '010'.
+  CONSTANTS lc_sanlf_020      TYPE sanlf VALUE '020'.
+  CONSTANTS lc_sanlf_040      TYPE sanlf VALUE '040'.
+  CONSTANTS lc_sanlf_042      TYPE sanlf VALUE '042'.
+  CONSTANTS lc_sanlf_070      TYPE sanlf VALUE '070'.
+  CONSTANTS lc_amount_cat     TYPE fti_amt_pm_cat VALUE '1002'.
+  CONSTANTS lc_rkontra        TYPE rkontra_new VALUE 'BP31300000'.
+  CONSTANTS lc_flow_se1000    TYPE tpm_dis_flowtype VALUE 'SE1000'.
+  CONSTANTS lc_flow_se2000    TYPE tpm_dis_flowtype VALUE 'SE2000'.
+* PIR9000000725 CN_RCG/L End
+
+  CLEAR w_periods.
+  MOVE-CORRESPONDING wa TO w_periods.                       "#EC ENHOK
+
+  "Set Portfolio from portfolio_tm if portfolio is empty
+  IF wa-portfolio_tm IS NOT INITIAL AND wa-portfolio IS INITIAL.
+    w_periods-portfolio = wa-portfolio_tm.
+  ENDIF.
+
+*** Start of PY001- ***
+*  "convert amount sap to display as per decimal places
+*  PERFORM convert_amount_disp
+*          USING wa-sbwhr
+*                wa-svwhr
+*          CHANGING wa-d_nominal_amt_pc
+*                   wa-d_amount_pc
+*                   wa-d_amount_vc
+*                   wa-d_book_val_pc
+*                   wa-d_book_val_vc.
+*** End of PY001- ***
+
+  "map each period data with table ztr_tr_assign
+  "position currency
+  LOOP AT i_tr_assign INTO lw_tr_assign
+    WHERE dis_flowtype = wa-flow_type.
+    "check if record meets the requirement/mapping
+    CLEAR lw_flag.
+* PIR9000000725 CN_RCG/L Start
+*      IF LW_TR_ASSIGN-BUSTRANSCAT = '0000' AND LW_TR_ASSIGN-GEN_BUSTRANSCAT = '0000'.
+    IF lw_tr_assign-bustranscat = lc_bustranscat AND lw_tr_assign-gen_bustranscat = lc_bustranscat.
+
+      lw_flag = abap_true.
+*      ELSEIF LW_TR_ASSIGN-BUSTRANSCAT = '0000' AND LW_TR_ASSIGN-GEN_BUSTRANSCAT IS NOT INITIAL.
+    ELSEIF lw_tr_assign-bustranscat = lc_bustranscat AND lw_tr_assign-gen_bustranscat IS NOT INITIAL.
+      IF lw_tr_assign-gen_bustranscat = wa-gen_bustranscat.
+        lw_flag = abap_true.
+      ENDIF.
+*      ELSEIF LW_TR_ASSIGN-GEN_BUSTRANSCAT = '0000' AND LW_TR_ASSIGN-BUSTRANSCAT IS NOT INITIAL.
+    ELSEIF lw_tr_assign-gen_bustranscat = lc_bustranscat AND lw_tr_assign-bustranscat IS NOT INITIAL.
+      IF lw_tr_assign-bustranscat = wa-bustranscat.
+        lw_flag = abap_true.
+      ENDIF.
+    ELSEIF lw_tr_assign-bustranscat IS NOT INITIAL AND lw_tr_assign-gen_bustranscat IS NOT INITIAL.
+      IF lw_tr_assign-gen_bustranscat = wa-gen_bustranscat AND
+         lw_tr_assign-bustranscat = wa-bustranscat.
+        lw_flag = abap_true.
+      ENDIF.
+    ENDIF.
+* PIR9000000725 CN_RCG/L End
+    "if record suit with any of above condition
+    IF lw_flag = abap_true.
+      CLEAR: w_periods-orig_cost_pc, w_periods-orig_cost_vc,
+             w_periods-purc_cost_pc, w_periods-purc_cost_vc,
+             w_periods-accr_int_pc, w_periods-accr_int_vc,
+             w_periods-fee_purc_pc, w_periods-fee_purc_vc,
+             w_periods-fee_sale_pc, w_periods-fee_sale_vc,
+             w_periods-cost_sale_pc, w_periods-cost_sale_vc,
+             w_periods-sett_amt_pc, w_periods-sett_amt_vc,
+             w_periods-rcgl_mkt_pc, w_periods-rcgl_mkt_vc,
+             w_periods-rcgl_fx_vc,
+             lw_d_book_val_pc, lw_d_book_val_vc,
+             lw_d_amount_pc, lw_d_amount_vc.
+      lw_d_book_val_pc = wa-d_book_val_pc.
+      lw_d_book_val_vc = wa-d_book_val_vc.
+      lw_d_amount_pc = wa-d_amount_pc.
+      lw_d_amount_vc = wa-d_amount_vc.
+      PERFORM set_sign USING lw_tr_assign-ssign lw_tr_assign-currency_type
+                       CHANGING lw_d_book_val_pc lw_d_book_val_vc
+                                lw_d_amount_pc lw_d_amount_vc.
+      PERFORM set_amt_to_column
+        USING lw_tr_assign-rep_column lw_tr_assign-currency_type
+              wa-flow_type "OW001+
+              lw_d_book_val_pc lw_d_book_val_vc
+              lw_d_amount_pc lw_d_amount_vc.
+      w_periods-trans_type = lw_tr_assign-trans_type.
+      COLLECT w_periods INTO i_periods.
+    ENDIF.
+  ENDLOOP.
+
+  "disposal amount tab
+  "position currency
+  READ TABLE i_assign_deep INTO lw_assign_deep
+    WITH KEY co_flowtype = wa-flow_type
+             currency_type = 'PC'
+             BINARY SEARCH.
+  IF sy-subrc IS INITIAL.
+    LOOP AT lw_assign_deep-dis_flowtype_tab INTO lw_upty.
+      lw_d_book_val_pc = wa-d_book_val_pc.
+      lw_d_book_val_vc = wa-d_book_val_vc.
+      lw_d_amount_pc = wa-d_amount_pc.
+      lw_d_amount_vc = wa-d_amount_vc.
+      CLEAR: w_periods-orig_cost_pc, w_periods-orig_cost_vc,
+             w_periods-purc_cost_pc, w_periods-purc_cost_vc,
+             w_periods-accr_int_pc, w_periods-accr_int_vc,
+             w_periods-fee_purc_pc, w_periods-fee_purc_vc,
+             w_periods-fee_sale_pc, w_periods-fee_sale_vc,
+             w_periods-cost_sale_pc, w_periods-cost_sale_vc,
+             w_periods-sett_amt_pc, w_periods-sett_amt_vc,
+             w_periods-rcgl_mkt_pc, w_periods-rcgl_mkt_vc,
+             w_periods-rcgl_fx_vc.
+      "set all sign as '-' for minus disposal amount
+      PERFORM set_sign USING '-' lw_assign_deep-currency_type
+                       CHANGING lw_d_book_val_pc lw_d_book_val_vc
+                                lw_d_amount_pc lw_d_amount_vc.
+      PERFORM set_amt_to_column
+        USING lw_upty-rep_column lw_assign_deep-currency_type
+              wa-flow_type "OW001+
+              lw_d_book_val_pc lw_d_book_val_vc
+              lw_d_amount_pc lw_d_amount_vc.
+      MOVE-CORRESPONDING w_periods TO lw_disp_amt.
+      lw_disp_amt-flow_type = lw_upty-co_flowtype.
+      lw_disp_amt-bustranscat = lw_upty-bustranscat.
+      lw_disp_amt-gen_bustranscat = lw_upty-gen_bustranscat.
+      COLLECT lw_disp_amt INTO i_disp_amt.
+    ENDLOOP.
+  ENDIF.
+  "valuation currency
+  READ TABLE i_assign_deep INTO lw_assign_deep
+    WITH KEY co_flowtype = wa-flow_type
+             currency_type = 'VC'
+             BINARY SEARCH.
+  IF sy-subrc IS INITIAL.
+    LOOP AT lw_assign_deep-dis_flowtype_tab INTO lw_upty.
+      lw_d_book_val_pc = wa-d_book_val_pc.
+      lw_d_book_val_vc = wa-d_book_val_vc.
+      lw_d_amount_pc = wa-d_amount_pc.
+      lw_d_amount_vc = wa-d_amount_vc.
+      CLEAR: w_periods-orig_cost_pc, w_periods-orig_cost_vc,
+             w_periods-purc_cost_pc, w_periods-purc_cost_vc,
+             w_periods-accr_int_pc, w_periods-accr_int_vc,
+             w_periods-fee_purc_pc, w_periods-fee_purc_vc,
+             w_periods-fee_sale_pc, w_periods-fee_sale_vc,
+             w_periods-cost_sale_pc, w_periods-cost_sale_vc,
+             w_periods-sett_amt_pc, w_periods-sett_amt_vc,
+             w_periods-rcgl_mkt_pc, w_periods-rcgl_mkt_vc,
+             w_periods-rcgl_fx_vc.
+      "set all sign as '-' for minus disposal amount
+      PERFORM set_sign USING '-' lw_assign_deep-currency_type
+                       CHANGING lw_d_book_val_pc lw_d_book_val_vc
+                                lw_d_amount_pc lw_d_amount_vc.
+      PERFORM set_amt_to_column
+        USING lw_upty-rep_column lw_assign_deep-currency_type
+              wa-flow_type "OW001+
+              lw_d_book_val_pc lw_d_book_val_vc
+              lw_d_amount_pc lw_d_amount_vc.
+      MOVE-CORRESPONDING w_periods TO lw_disp_amt.
+      lw_disp_amt-flow_type = lw_upty-co_flowtype.
+      lw_disp_amt-bustranscat = lw_upty-bustranscat.
+      lw_disp_amt-gen_bustranscat = lw_upty-gen_bustranscat.
+      COLLECT lw_disp_amt INTO i_disp_amt.
+    ENDLOOP.
+  ENDIF.
+
+  "calculate all nominal amount/units
+* PIR9000000725 CN_RCG/L Start
+*  IF WA-D_UNITS IS NOT INITIAL OR WA-D_NOMINAL_AMT_PC IS NOT INITIAL.
+  IF ( wa-d_units IS NOT INITIAL OR wa-d_nominal_amt_pc IS NOT INITIAL )
+    AND ( wa-flow_type = lc_flow_se1000 OR wa-flow_type = lc_flow_se2000 ).
+
+    CLEAR lw_nom_amt.
+    MOVE-CORRESPONDING w_periods TO lw_nom_amt.
+    lw_nom_amt-nom_amt = wa-d_units + wa-d_nominal_amt_pc.
+    COLLECT lw_nom_amt INTO i_nom_amt.
+  ENDIF.
+
+* PIR9000000725 CN_RCG/L Start
+  IF wa-valuation_area = lc_va_104
+    AND ( wa-sanlf = lc_sanlf_010 OR wa-sanlf = lc_sanlf_020 OR wa-sanlf = lc_sanlf_040
+          OR wa-sanlf = lc_sanlf_042 OR wa-sanlf = lc_sanlf_070 )
+    AND wa-amount_cat = lc_amount_cat
+    AND wa-rkontra <> lc_rkontra.
+    MOVE-CORRESPONDING wa TO lw_cn_trs.                     "#EC ENHOK
+    COLLECT lw_cn_trs INTO i_cn_trs.
+  ENDIF.
+* PIR9000000725 CN_RCG/L End
+
+  CLEAR: lw_tr_assign, lw_disp_amt, lw_nom_amt,
+           lw_d_book_val_pc, lw_d_book_val_vc,
+           lw_d_amount_pc, lw_d_amount_vc, lw_flag,
+           lw_assign_deep, lw_upty.
+
+ENDFORM.                    "callback_periods
+*&---------------------------------------------------------------------*
+*&      Form  GET_CURR
+*&---------------------------------------------------------------------*
+*       Get decimal currency
+*----------------------------------------------------------------------*
+FORM get_curr .
+
+  SELECT * INTO TABLE i_tcurx
+    FROM tcurx.
+  IF sy-subrc IS INITIAL.
+    SORT i_tcurx BY currkey.
+  ENDIF.
+
+ENDFORM.                    " GET_CURR
+*&---------------------------------------------------------------------*
+*&      Form  GET_TR_ASSIGN
+*&---------------------------------------------------------------------*
+*       Get Transaction Assign for mapping purpose
+*----------------------------------------------------------------------*
+FORM get_tr_assign .
+
+  DATA lw_tr_assign   TYPE ztr_tr_assign.
+  DATA li_upty        TYPE ztr_upty_trans_tab.
+  DATA lw_upty        TYPE ztr_upty_trans.
+  DATA lw_assign_deep TYPE t_assign_deep.
+
+  SELECT * FROM ztr_tr_assign                           "#EC CI_NOFIELD
+    INTO TABLE i_tr_assign
+    WHERE rep_column <> space.
+  IF sy-subrc IS INITIAL.
+    SORT i_tr_assign BY co_flowtype currency_type ssign.
+    "put in deep structure, but in this case, 1 co_flowtype could have more than 1 dis_flowtype
+    "based on current logic
+    LOOP AT i_tr_assign INTO lw_tr_assign
+      WHERE co_flowtype IS NOT INITIAL.
+      "first record, do not store in itab, but collect data first
+      IF lw_assign_deep IS INITIAL.
+        MOVE-CORRESPONDING lw_tr_assign TO lw_assign_deep. "#EC ENHOK Nov 15
+        CLEAR lw_assign_deep-dis_flowtype_tab.
+        MOVE-CORRESPONDING lw_tr_assign TO lw_upty.   "#EC ENHOK Nov 15
+        lw_upty-co_flowtype = lw_tr_assign-dis_flowtype.
+        APPEND lw_upty TO li_upty.
+        CONTINUE.
+      ENDIF.
+      IF lw_tr_assign-co_flowtype = lw_assign_deep-co_flowtype AND
+         lw_tr_assign-currency_type = lw_assign_deep-currency_type AND
+         lw_tr_assign-ssign = lw_assign_deep-ssign.
+        MOVE-CORRESPONDING lw_tr_assign TO lw_upty.   "#EC ENHOK Nov 15
+        lw_upty-co_flowtype = lw_tr_assign-dis_flowtype.
+        APPEND lw_upty TO li_upty.
+      ELSE.
+        "store in itab
+        lw_assign_deep-dis_flowtype_tab = li_upty.
+        APPEND lw_assign_deep TO i_assign_deep.
+        CLEAR li_upty.
+        "set new record
+        MOVE-CORRESPONDING lw_tr_assign TO lw_assign_deep. "#EC ENHOK Nov 15
+        CLEAR lw_assign_deep-dis_flowtype_tab.
+        MOVE-CORRESPONDING lw_tr_assign TO lw_upty.   "#EC ENHOK Nov 15
+        lw_upty-co_flowtype = lw_tr_assign-dis_flowtype.
+        APPEND lw_upty TO li_upty.
+      ENDIF.
+    ENDLOOP.
+    "store in itab for the last record
+    lw_assign_deep-dis_flowtype_tab = li_upty.
+    APPEND lw_assign_deep TO i_assign_deep.
+  ENDIF.
+
+  DELETE i_tr_assign WHERE co_flowtype IS NOT INITIAL.
+  SORT i_tr_assign BY dis_flowtype currency_type.
+  SORT i_assign_deep BY co_flowtype currency_type.
+
+ENDFORM.                    " GET_TR_ASSIGN
+*&---------------------------------------------------------------------*
+*&      Form  CONVERT_AMOUNT_DISP
+*&---------------------------------------------------------------------*
+*       Convert amount SAP to display
+*----------------------------------------------------------------------*
+FORM convert_amount_disp USING lp_sbwhr TYPE tb_bwhr
+                               lp_svwhr TYPE tpm_valuation_curr
+                         CHANGING lp_nominal_amt_pc TYPE tpm_amount
+                                  lp_amount_pc      TYPE tpm_amount
+                                  lp_amount_vc      TYPE tpm_amount
+                                  lp_book_val_pc    TYPE tpm_amount
+                                  lp_book_val_vc    TYPE tpm_amount.
+
+  DATA lw_amount_int TYPE tpm_amount.
+  DATA lw_amount_dis TYPE tpm_amount.
+
+  IF lp_nominal_amt_pc IS NOT INITIAL.
+    lw_amount_int = lp_nominal_amt_pc.
+    PERFORM change_curr_dis USING lw_amount_int lp_sbwhr
+                            CHANGING lw_amount_dis.
+    lp_nominal_amt_pc = lw_amount_dis.
+  ENDIF.
+
+  IF lp_amount_pc IS NOT INITIAL.
+    CLEAR: lw_amount_int, lw_amount_dis.
+    lw_amount_int = lp_amount_pc.
+    PERFORM change_curr_dis USING lw_amount_int lp_sbwhr
+                            CHANGING lw_amount_dis.
+    lp_amount_pc = lw_amount_dis.
+  ENDIF.
+
+  IF lp_amount_vc IS NOT INITIAL.
+    CLEAR: lw_amount_int, lw_amount_dis.
+    lw_amount_int = lp_amount_vc.
+    PERFORM change_curr_dis USING lw_amount_int lp_svwhr
+                            CHANGING lw_amount_dis.
+    lp_amount_vc = lw_amount_dis.
+  ENDIF.
+
+  IF lp_book_val_pc IS NOT INITIAL.
+    CLEAR: lw_amount_int, lw_amount_dis.
+    lw_amount_int = lp_book_val_pc.
+    PERFORM change_curr_dis USING lw_amount_int lp_sbwhr
+                            CHANGING lw_amount_dis.
+    lp_book_val_pc = lw_amount_dis.
+  ENDIF.
+
+  IF lp_book_val_vc IS NOT INITIAL.
+    CLEAR: lw_amount_int, lw_amount_dis.
+    lw_amount_int = lp_book_val_vc.
+    PERFORM change_curr_dis USING lw_amount_int lp_svwhr
+                            CHANGING lw_amount_dis.
+    lp_book_val_vc = lw_amount_dis.
+  ENDIF.
+
+  CLEAR: lw_amount_dis, lw_amount_int.
+
+ENDFORM.                    " CONVERT_AMOUNT_DISP
+*&---------------------------------------------------------------------*
+*&      Form  CHANGE_CURR_DIS
+*&---------------------------------------------------------------------*
+*       Change currency sap to display
+*----------------------------------------------------------------------*
+FORM change_curr_dis  USING    lp_amount_int TYPE tpm_amount
+                               lp_curr TYPE tb_bwhr
+                      CHANGING lp_amount_dis TYPE tpm_amount.
+
+  DATA lw_tcurx LIKE tcurx.
+  DATA li_tcurx TYPE tcurx.
+  DATA lw_shift TYPE p LENGTH 2.
+
+  CLEAR: lw_shift.
+  READ TABLE i_tcurx INTO lw_tcurx
+    WITH KEY currkey = lp_curr.
+  CASE sy-subrc.
+    WHEN 0.
+      lw_shift = 2 - lw_tcurx-currdec.
+    WHEN OTHERS.
+      SELECT SINGLE * FROM tcurx INTO li_tcurx
+        WHERE currkey = lp_curr.
+      CASE sy-subrc.
+        WHEN 0.
+          lw_shift = 2 - li_tcurx-currdec.
+          lw_tcurx = li_tcurx.
+          APPEND lw_tcurx TO i_tcurx.
+        WHEN 4.
+          CLEAR: lw_tcurx.
+          lw_tcurx-currkey = lp_curr.
+          lw_tcurx-currdec = 2.
+          APPEND lw_tcurx TO i_tcurx.
+        WHEN OTHERS.
+          MESSAGE e006(ztr_mc_r0004) WITH 'tcurx'.  "Error reading database table tcurx
+      ENDCASE.
+  ENDCASE.
+
+  lp_amount_dis = lp_amount_int * ( 10 ** lw_shift ).
+  CLEAR lw_tcurx.
+
+ENDFORM.                    " CHANGE_CURR_DIS
+*&---------------------------------------------------------------------*
+*&      Form  SET_SIGN
+*&---------------------------------------------------------------------*
+*       Set Negative sign to each amount if any
+*----------------------------------------------------------------------*
+FORM set_sign  USING    lp_ssign           TYPE tpm_pl_ssign
+                        lp_currency_type   TYPE zz_curr_ty
+               CHANGING lp_d_book_val_pc   TYPE tpm_amount
+                        lp_d_book_val_vc   TYPE tpm_amount
+                        lp_d_amount_pc   TYPE tpm_amount
+                        lp_d_amount_vc   TYPE tpm_amount.
+
+  IF lp_ssign = '-'.
+    IF lp_d_book_val_pc IS NOT INITIAL AND lp_currency_type = 'PC'.
+      lp_d_book_val_pc = lp_d_book_val_pc * -1.
+    ENDIF.
+    IF lp_d_book_val_vc IS NOT INITIAL AND lp_currency_type = 'VC'.
+      lp_d_book_val_vc = lp_d_book_val_vc * -1.
+    ENDIF.
+    IF lp_d_amount_pc IS NOT INITIAL AND lp_currency_type = 'PC'.
+      lp_d_amount_pc = lp_d_amount_pc * -1.
+    ENDIF.
+    IF lp_d_amount_vc IS NOT INITIAL AND lp_currency_type = 'VC'.
+      lp_d_amount_vc = lp_d_amount_vc * -1.
+    ENDIF.
+  ENDIF.
+
+ENDFORM.                    " SET_SIGN
+*&---------------------------------------------------------------------*
+*&      Form  SET_AMT_TO_COLUMN
+*&---------------------------------------------------------------------*
+*       Set amount to each corespondent column
+*----------------------------------------------------------------------*
+FORM set_amt_to_column  USING    lp_column          TYPE zz_pl_cate
+                                 lp_currency_type   TYPE zz_curr_ty
+                                 lp_flow_type TYPE tpm_dis_flowtype "OW001+
+                                 lp_d_book_val_pc   TYPE tpm_amount
+                                 lp_d_book_val_vc   TYPE tpm_amount
+                                 lp_d_amount_pc   TYPE tpm_amount
+                                 lp_d_amount_vc   TYPE tpm_amount.
+
+  IF lp_column = 'ORIG_COST'.
+    IF lp_currency_type = 'PC'.
+      w_periods-orig_cost_pc = lp_d_book_val_pc.
+    ELSEIF lp_currency_type = 'VC'.
+      w_periods-orig_cost_vc = lp_d_book_val_vc.
+    ENDIF.
+  ELSEIF lp_column = 'PURC_COST'.
+    IF lp_currency_type = 'PC'.
+      w_periods-purc_cost_pc = lp_d_book_val_pc.
+    ELSEIF lp_currency_type = 'VC'.
+      w_periods-purc_cost_vc = lp_d_book_val_vc.
+    ENDIF.
+  ELSEIF lp_column = 'ACCR_INT'.
+    IF lp_currency_type = 'PC'.
+      w_periods-accr_int_pc = lp_d_amount_pc.
+    ELSEIF lp_currency_type = 'VC'.
+      w_periods-accr_int_vc = lp_d_amount_vc.
+    ENDIF.
+  ELSEIF lp_column = 'FEE_PURC'.
+    IF lp_currency_type = 'PC'.
+      w_periods-fee_purc_pc = lp_d_book_val_pc.
+    ELSEIF lp_currency_type = 'VC'.
+      w_periods-fee_purc_vc = lp_d_book_val_vc.
+    ENDIF.
+  ELSEIF lp_column = 'FEE_SALE'.
+    IF lp_currency_type = 'PC'.
+      w_periods-fee_sale_pc = lp_d_book_val_pc.
+    ELSEIF lp_currency_type = 'VC'.
+      w_periods-fee_sale_vc = lp_d_book_val_vc.
+    ENDIF.
+  ELSEIF lp_column = 'COST_SALE'.
+    IF lp_currency_type = 'PC'.
+      w_periods-cost_sale_pc = lp_d_book_val_pc.
+    ELSEIF lp_currency_type = 'VC'.
+      w_periods-cost_sale_vc = lp_d_book_val_vc.
+    ENDIF.
+
+*** START OF OW001+ ***
+    IF lp_flow_type EQ 'DBT_E081' OR lp_flow_type EQ 'DBT_E082'
+    OR lp_flow_type EQ 'DBT_E083' OR lp_flow_type EQ 'DBT_E084'.
+      IF lp_currency_type = 'PC' AND w_periods-cost_sale_pc IS INITIAL.
+        w_periods-cost_sale_pc = lp_d_amount_pc.
+      ELSEIF lp_currency_type = 'VC' AND w_periods-cost_sale_vc is INITIAL.
+        w_periods-cost_sale_vc = lp_d_amount_vc.
+      ENDIF.
+    ENDIF.
+*** END OF OW001+ ***
+  ELSEIF lp_column = 'SETT_AMT'.
+    IF lp_currency_type = 'PC'.
+      w_periods-sett_amt_pc = lp_d_amount_pc.
+    ELSEIF lp_currency_type = 'VC'.
+      w_periods-sett_amt_vc = lp_d_amount_vc.
+    ENDIF.
+  ELSEIF lp_column = 'RCGL_MKT'.
+    IF lp_currency_type = 'PC'.
+      w_periods-rcgl_mkt_pc = lp_d_amount_pc.
+    ELSEIF lp_currency_type = 'VC'.
+      w_periods-rcgl_mkt_vc = lp_d_amount_vc.
+    ENDIF.
+  ELSEIF lp_column = 'RCGL_FX'.
+    IF lp_currency_type = 'VC'.
+      w_periods-rcgl_fx_vc = lp_d_amount_vc.
+    ENDIF.
+  ENDIF.
+
+ENDFORM.                    " SET_AMT_TO_COLUMN
+*&---------------------------------------------------------------------*
+*&      Form  GET_DATA
+*&---------------------------------------------------------------------*
+*       Get All master Data
+*----------------------------------------------------------------------*
+FORM get_data .
+
+  "get company name
+  PERFORM get_comp_name.
+
+  "get valuation area name
+  PERFORM get_va_name.
+
+  "get valuation class name
+  PERFORM get_vc_name.
+
+  "get portfolio name
+  PERFORM get_portfolio_name.
+
+  "get business partner & Transaction data
+  PERFORM get_bp_trans.
+
+  "get product type name
+  PERFORM get_prod_type_nm.
+
+  "get security classification name
+  PERFORM get_sec_class_nm.
+
+  "get security type name
+  PERFORM get_sec_type_nm.
+
+  "get security master name
+  PERFORM get_sec_data.
+
+  "get profit center
+  PERFORM get_port_code_block.
+
+  "get Ref.Business Transaction ID from TRLT_TRANSACTION
+  SELECT bustransid refbustransid
+    INTO TABLE i_trlt_transaction
+    FROM trlt_transaction
+    FOR ALL ENTRIES IN i_periods
+    WHERE bustransid = i_periods-bustransid.
+  IF sy-subrc IS INITIAL.
+    SORT i_trlt_transaction BY bustransid.
+  ENDIF.
+
+* PIR9000000725 CN_RCG/L Start
+  PERFORM process_rcgl_cn.
+* PIR9000000725 CN_RCG/L End
+
+*** Start of AC002+ ***
+  PERFORM get_eff_int_rate.
+  PERFORM get_trans_text.
+*** End of  AC002+ ***
+ENDFORM.                    " GET_DATA
+*&---------------------------------------------------------------------*
+*&      Form  GET_COMP_NAME
+*&---------------------------------------------------------------------*
+*       Get Company Name
+*----------------------------------------------------------------------*
+FORM get_comp_name .
+
+  SELECT bukrs butxt FROM t001
+    INTO TABLE i_t001
+    WHERE bukrs IN s_bukr.
+  IF sy-subrc IS INITIAL.
+    SORT i_t001 BY bukrs.
+  ENDIF.
+
+ENDFORM.                    " GET_COMP_NAME
+*&---------------------------------------------------------------------*
+*&      Form  GET_VA_NAME
+*&---------------------------------------------------------------------*
+*       Get Valuation Area Name
+*----------------------------------------------------------------------*
+FORM get_va_name .
+
+  SELECT valuation_area val_area_name FROM trgc_val_area
+  INTO TABLE i_trgc_val_area
+  WHERE valuation_area IN s_va.
+  IF sy-subrc IS INITIAL.
+    SORT i_trgc_val_area BY valuation_area.
+  ENDIF.
+
+ENDFORM.                    " GET_VA_NAME
+*&---------------------------------------------------------------------*
+*&      Form  GET_VC_NAME
+*&---------------------------------------------------------------------*
+*       Get Valuation Class Name
+*----------------------------------------------------------------------*
+FORM get_vc_name .
+
+  SELECT * FROM trgc_val_class_t
+    INTO TABLE i_trgc_val_class_t
+    WHERE valuation_area IN s_va AND
+          valuation_class IN s_vc AND
+          spras = sy-langu.
+  IF sy-subrc IS INITIAL.
+    SORT i_trgc_val_class_t BY valuation_area valuation_class.
+  ENDIF.
+
+ENDFORM.                    " GET_VC_NAME
+*&---------------------------------------------------------------------*
+*&      Form  GET_PORTFOLIO_NAME
+*&---------------------------------------------------------------------*
+*       Get Portfolio Name
+*----------------------------------------------------------------------*
+FORM get_portfolio_name .
+
+  SELECT bukrs rportb xportb FROM twpob
+    INTO TABLE i_twpob
+    WHERE ( bukrs IN s_bukr AND rportb IN s_port ) OR
+          ( bukrs IN s_bukr AND rportb IN s_portt ).
+  IF sy-subrc IS INITIAL.
+    SORT i_twpob BY bukrs rportb.
+  ENDIF.
+
+ENDFORM.                    " GET_PORTFOLIO_NAME
+*&---------------------------------------------------------------------*
+*&      Form  GET_BP_TRANS
+*&---------------------------------------------------------------------*
+*       Get Business Partner and Transaction Data
+*----------------------------------------------------------------------*
+FORM get_bp_trans.
+
+  CONSTANTS lc_flow_type_purchase TYPE tb_sfhazba VALUE '0100'.
+  CONSTANTS lc_flow_type_sale     TYPE tb_sfhazba VALUE '0200'.
+  CONSTANTS lc_flow_type_invs     TYPE tb_sfhazba VALUE '1100'.
+  CONSTANTS lc_cond_type_final    TYPE tb_sfhazba VALUE '1120'.
+  CONSTANTS lc_cond_type_interest TYPE skoart VALUE '1200'.
+  CONSTANTS lc_cond_type_perc     TYPE skoart VALUE '0100'.
+  CONSTANTS lc_cond_type_instll   TYPE skoart VALUE '0101'.
+  CONSTANTS lc_money_market       TYPE rantyp VALUE '5'.
+
+  SELECT bukrs rfha kontrh zuond rfhazul FROM vtbfha
+    INTO TABLE i_vtbfha
+    FOR ALL ENTRIES IN i_periods
+    WHERE ( bukrs = i_periods-bukrs AND
+            rfha = i_periods-deal_number ) OR
+          ( bukrs = i_periods-bukrs AND
+            rfha = i_periods-lotgen_dealnr ) OR
+          ( bukrs = i_periods-bukrs AND
+            rfha = i_periods-se_deal_number ).
+  IF sy-subrc IS INITIAL.
+    SORT i_vtbfha BY bukrs rfha.
+    DELETE ADJACENT DUPLICATES FROM i_vtbfha.
+
+    "get business partner name
+    SELECT partner name_org1 FROM but000
+      INTO TABLE i_but000
+      FOR ALL ENTRIES IN i_vtbfha
+      WHERE partner = i_vtbfha-kontrh.
+    IF sy-subrc IS INITIAL.
+      SORT i_but000 BY partner.
+    ENDIF.
+
+    "get settlement date
+    SELECT bukrs
+           rfha
+           dzterm
+           rgatt
+           rfhazu
+           rkondgr
+           rkond
+           nstufe
+           dbestand
+           bnwhr
+           sfhazba
+           skoart
+           dguel_kp
+      FROM vtbfhapo
+      INTO TABLE i_vtbfhapo
+      FOR ALL ENTRIES IN i_vtbfha
+      WHERE bukrs = i_vtbfha-bukrs AND
+            rfha = i_vtbfha-rfha AND
+            rfhazu = i_vtbfha-rfhazul AND
+            ( sfhazba = lc_flow_type_purchase OR
+              sfhazba = lc_flow_type_sale OR
+              ( sfhazba = lc_flow_type_invs AND skoart = lc_cond_type_final ) OR
+              ( sfhazba = lc_cond_type_final AND skoart = lc_cond_type_final ) ).
+    IF sy-subrc IS INITIAL.
+      SORT i_vtbfhapo BY bukrs rfha rfhazu sfhazba.
+    ENDIF.
+  ENDIF.
+
+  "get coupon rate
+  SELECT bukrs
+         rgatt
+         rfha
+         rfhazu
+         rkondgr
+         rkond
+         dguel_kp
+         nstufe
+         pkond
+  FROM vtbfinko
+    INTO TABLE i_vtbfinko
+    FOR ALL ENTRIES IN i_periods
+    WHERE bukrs = i_periods-bukrs AND
+          rgatt = ' ' AND
+          ( rfha = i_periods-deal_number OR
+            rfha = i_periods-lotgen_dealnr OR
+            rfha = i_periods-se_deal_number ) AND
+          dguel_kp <= i_periods-dbestand AND
+          skoart = lc_cond_type_interest AND
+          rantyp = lc_money_market.           "money market
+  IF sy-subrc IS INITIAL.
+    SORT i_vtbfinko BY bukrs rfha rfhazu dguel_kp ASCENDING.
+  ENDIF.
+
+  "get coupon rate
+  SELECT vzzkopo~mandt
+         vzzkopo~bukrs
+         vzzkopo~sanlf
+         vzzkopo~rkey1
+         vzzkopo~dguel_kp
+         vzzkopo~skoart
+         vzzkopo~pkond
+    INTO TABLE i_vzzkopo
+    FROM vzzkopo
+    JOIN vwpanla
+      ON vwpanla~mandt = vzzkopo~mandt AND
+         vwpanla~ranl = vzzkopo~rkey1
+    FOR ALL ENTRIES IN i_periods
+    WHERE bukrs = '' AND
+          vzzkopo~sanlf = vwpanla~sanlf AND
+          rkey1 = i_periods-security_id AND
+          rkey2 = ' ' AND
+          rkey3 = ' ' AND
+*          DGUEL_KK = ' ' AND
+*          NLFD_ANG = ' ' AND
+          ( skoart = lc_cond_type_perc OR
+            skoart = lc_cond_type_instll ).
+  IF sy-subrc IS INITIAL.
+    SORT i_vzzkopo BY bukrs sanlf rkey1 dguel_kp DESCENDING.
+  ENDIF.
+
+ENDFORM.                    " GET_BP_TRANS
+*&---------------------------------------------------------------------*
+*&      Form  GET_PROD_TYPE_NM
+*&---------------------------------------------------------------------*
+*       Get Product Type Name
+*----------------------------------------------------------------------*
+FORM get_prod_type_nm .
+
+  SELECT gsart ltx FROM tzpat
+    INTO TABLE i_tzpat
+    WHERE spras = sy-langu AND
+          gsart IN s_gsartp.
+  IF sy-subrc IS INITIAL.
+    SORT i_tzpat BY gsart.
+  ENDIF.
+
+ENDFORM.                    " GET_PROD_TYPE_NM
+*&---------------------------------------------------------------------*
+*&      Form  GET_SEC_CLASS_NM
+*&---------------------------------------------------------------------*
+*       Get Security Classification Name
+*----------------------------------------------------------------------*
+FORM get_sec_class_nm .
+
+  SELECT alwpkl xlangbez FROM tw22t
+    INTO TABLE i_tw22t
+    FOR ALL ENTRIES IN i_periods
+    WHERE spras = sy-langu AND
+          alwpkl = i_periods-alwpkl.
+  IF sy-subrc IS INITIAL.
+    SORT i_tw22t BY alwpkl.
+  ENDIF.
+
+ENDFORM.                    " GET_SEC_CLASS_NM
+*&---------------------------------------------------------------------*
+*&      Form  GET_SEC_TYPE_NM
+*&---------------------------------------------------------------------*
+*       Get Security Type Name
+*----------------------------------------------------------------------*
+FORM get_sec_type_nm .
+
+  SELECT swerttyp xlangbez FROM tw20t
+  INTO TABLE i_tw20t
+  FOR ALL ENTRIES IN i_periods
+  WHERE spras = sy-langu AND
+        swerttyp = i_periods-swerttyp.
+  IF sy-subrc IS INITIAL.
+    SORT i_tw20t BY swerttyp.
+  ENDIF.
+
+ENDFORM.                    " GET_SEC_TYPE_NM
+*&---------------------------------------------------------------------*
+*&      Form  GET_SEC_DATA
+*&---------------------------------------------------------------------*
+*       Get Security Master and additional data
+*----------------------------------------------------------------------*
+FORM get_sec_data .
+
+  SELECT ranl xallb FROM vwpanla
+    INTO TABLE i_vwpanla
+    FOR ALL ENTRIES IN i_periods
+    WHERE ranl = i_periods-security_id.
+  IF sy-subrc IS INITIAL.
+    SORT i_vwpanla BY ranl.
+    DELETE ADJACENT DUPLICATES FROM i_vwpanla.
+
+    "get security additional data
+    SELECT security_id ny_sec_type mac_type FROM ztr_sec_add
+      INTO TABLE i_sec_add
+      FOR ALL ENTRIES IN i_vwpanla
+      WHERE security_id = i_vwpanla-ranl.
+    IF sy-subrc IS INITIAL.
+      SORT i_sec_add BY security_id.
+    ENDIF.
+  ENDIF.
+
+ENDFORM.                    " GET_SEC_DATA
+*&---------------------------------------------------------------------*
+*&      Form  GET_PORT_CODE_BLOCK
+*&---------------------------------------------------------------------*
+*       Get Portfolio and Code Block data
+*----------------------------------------------------------------------*
+FORM get_port_code_block .
+
+  CONSTANTS lc_ctr_area_aspac TYPE kokrs VALUE 'AP01'.
+
+  SELECT * FROM ztr_portfolio
+    INTO TABLE i_portfolio
+    WHERE ( comp_code IN s_bukr AND portfolio IN s_port ) OR
+          ( comp_code IN s_bukr AND portfolio IN s_portt ).
+  IF sy-subrc IS INITIAL.
+    SORT i_portfolio BY comp_code portfolio.
+    DELETE ADJACENT DUPLICATES FROM i_portfolio.
+
+    "get HK Regulatory LOB description
+    SELECT * FROM zstatlob
+      INTO TABLE i_zstatlob
+      FOR ALL ENTRIES IN i_portfolio
+      WHERE zzuser01 = i_portfolio-zzuser01.
+    IF sy-subrc IS INITIAL.
+      SORT i_zstatlob BY zzuser01.
+    ENDIF.
+
+    "get IFRS description
+    SELECT * FROM zifrscd
+      INTO TABLE i_zifrscd
+      FOR ALL ENTRIES IN i_portfolio
+      WHERE zzuser02 = i_portfolio-zzuser02.
+    IF sy-subrc IS INITIAL.
+      SORT i_zifrscd BY zzuser02.
+    ENDIF.
+
+    "Get Local Regulatory LOB description
+    SELECT * FROM zlocallob
+      INTO TABLE i_zlocallob
+      FOR ALL ENTRIES IN i_portfolio
+      WHERE zzuser03 = i_portfolio-zzuser03.
+    IF sy-subrc IS INITIAL.
+      SORT i_zlocallob BY zzuser03.
+    ENDIF.
+
+    "Get GAAP code description
+    SELECT * FROM zgaapcd
+      INTO TABLE i_zgaapcd
+      FOR ALL ENTRIES IN i_portfolio
+      WHERE zzuser06 = i_portfolio-zzuser06.
+    IF sy-subrc IS INITIAL.
+      SORT i_zgaapcd BY zzuser06.
+    ENDIF.
+
+    "Get profit center description
+    SELECT prctr ktext FROM cepct
+      INTO TABLE i_cepct
+      FOR ALL ENTRIES IN i_portfolio
+      WHERE spras = sy-langu AND
+            prctr = i_portfolio-prctr AND
+            datbi >= sy-datum AND
+            kokrs = lc_ctr_area_aspac.
+    IF sy-subrc IS INITIAL.
+      SORT i_cepct BY prctr.
+    ENDIF.
+  ENDIF.
+
+ENDFORM.                    " GET_PORT_CODE_BLOCK
+*&---------------------------------------------------------------------*
+*&      Form  SET_DATA
+*&---------------------------------------------------------------------*
+*       Set All field data to be displayed in report
+*----------------------------------------------------------------------*
+FORM set_data .
+
+  DATA lw_trlt_transaction TYPE t_trlt_transaction.
+  FIELD-SYMBOLS <fs_output> TYPE t_report.
+  CLEAR w_periods.
+  SORT i_nom_amt BY lot_id deal_number lotgen_dealnr se_deal_number valuation_area valuation_class.
+  SORT i_disp_amt BY flow_type lot_id valuation_area valuation_class bustransid bustranscat gen_bustranscat.
+  SORT i_periods BY lot_id valuation_area valuation_class bustransid.
+
+  DATA li_output           TYPE STANDARD TABLE OF t_report.         "AC002+
+  DATA lw_output           TYPE t_report.                           "AC002+
+  REFRESH li_output.                                                "AC002+
+  LOOP AT i_periods INTO w_periods.
+
+    "set Ref.Business Transaction ID
+    READ TABLE i_trlt_transaction INTO lw_trlt_transaction
+      WITH KEY bustransid = w_periods-bustransid
+      BINARY SEARCH.
+    IF sy-subrc IS INITIAL.
+      w_periods-refbustransid = lw_trlt_transaction-refbustransid.
+    ENDIF.
+
+    "set transaction number
+    PERFORM set_deal_number.
+
+    "deduct disposal amount
+    PERFORM deduct_disp_amt.
+
+    "nominal/units
+    PERFORM set_nom_amt.
+
+    "set all master data
+    PERFORM set_master_data.
+
+    "set posting status text
+    PERFORM set_post_stat.
+
+    "RC data
+    IF p_rep IS NOT INITIAL.
+      PERFORM get_rc_data USING w_periods-orig_cost_vc w_periods-orig_cost_rc.
+      PERFORM get_rc_data USING w_periods-purc_cost_vc w_periods-purc_cost_rc.
+      PERFORM get_rc_data USING w_periods-accr_int_vc w_periods-accr_int_rc.
+      PERFORM get_rc_data USING w_periods-fee_purc_vc w_periods-fee_purc_rc.
+      PERFORM get_rc_data USING w_periods-fee_sale_vc w_periods-fee_sale_rc.
+      PERFORM get_rc_data USING w_periods-cost_sale_vc w_periods-cost_sale_rc.
+      PERFORM get_rc_data USING w_periods-sett_amt_vc w_periods-sett_amt_rc.
+      PERFORM get_rc_data USING w_periods-rcgl_mkt_vc w_periods-rcgl_mkt_rc.
+      PERFORM get_rc_data USING w_periods-rcgl_fx_vc w_periods-rcgl_fx_rc.
+    ENDIF.
+
+    "Total RCG/(L)
+    w_periods-tot_rcgl_vc = w_periods-rcgl_mkt_vc + w_periods-rcgl_fx_vc.
+    w_periods-tot_rcgl_rc = w_periods-rcgl_mkt_rc + w_periods-rcgl_fx_rc.
+
+    CLEAR: w_periods-flow_type, w_periods-bustransid, w_periods-refbustransid,
+           w_periods-bustranscat, w_periods-gen_bustranscat,
+           w_periods-deal_number, w_periods-lotgen_dealnr, w_periods-se_deal_number.
+*** Start of AC002+ ***
+
+    CLEAR w_periods-dbudat.
+    IF w_periods-sfhaart NE '109' AND
+        w_periods-sfhaart NE '209'.
+      CLEAR w_periods-sfhaart.
+    ENDIF.
+    COLLECT w_periods INTO li_output.
+    CLEAR w_periods-sfhaart.
+*** End of  AC002+ ***
+    COLLECT w_periods INTO i_output.
+    SORT i_output BY lot_id trans_no valuation_area valuation_class trans_type.
+    SORT li_output BY sfhaart.              "AC002+
+    DELETE li_output WHERE sfhaart = SPACE. "AC002+
+  ENDLOOP.
+
+* PIR9000000725 CN_RCG/L Start
+  "set cn rcg/l
+  LOOP AT i_output ASSIGNING <fs_output> WHERE valuation_area = '104'.
+    PERFORM set_rcgl_cn CHANGING <fs_output>.
+  ENDLOOP.
+* PIR9000000725 CN_RCG/L End
+
+*** Start of AC002+ ***
+  LOOP AT i_output ASSIGNING <fs_output>.
+      READ TABLE i_peffzins INTO w_peffzins
+      WITH KEY bukrs = <fs_output>-bukrs
+           rfha = <fs_output>-trans_no
+           BINARY SEARCH.
+      IF sy-subrc IS INITIAL.
+        <fs_output>-peffzins = w_peffzins-peffzins.
+      ENDIF.
+
+      READ TABLE li_output INTO lw_output WITH KEY bukrs = <fs_output>-bukrs
+                                                   trans_no = <fs_output>-trans_no
+                                                   valuation_area = <fs_output>-valuation_area
+                                                   lot_id = <fs_output>-lot_id
+                                                   valuation_class = <fs_output>-valuation_class
+                                                   trans_type = <fs_output>-trans_type.
+      IF sy-subrc EQ 0.
+        READ TABLE i_at10t INTO w_at10t
+        WITH KEY sgsart  = lw_output-gsart
+                 sfhaart = lw_output-sfhaart
+             BINARY SEARCH.
+        IF sy-subrc IS INITIAL.
+          <fs_output>-sfhaart = lw_output-sfhaart.
+          <fs_output>-xtext = w_at10t-xtext.
+        ENDIF.
+      ENDIF.
+  ENDLOOP.
+*** End of  AC002+ ***
+ENDFORM.                    " SET_DATA
+*&---------------------------------------------------------------------*
+*&      Form  DEDUCT_DISP_AMT
+*&---------------------------------------------------------------------*
+*       Deduct amount with disposal amount if any
+*----------------------------------------------------------------------*
+FORM deduct_disp_amt .
+
+  DATA lw_disp_amt TYPE t_disp_amt.
+
+  READ TABLE i_disp_amt INTO lw_disp_amt
+    WITH KEY flow_type = w_periods-flow_type
+             lot_id = w_periods-lot_id
+             valuation_area = w_periods-valuation_area
+             valuation_class = w_periods-valuation_class
+             bustransid = w_periods-refbustransid
+             bustranscat = w_periods-bustranscat
+             gen_bustranscat = w_periods-gen_bustranscat
+             BINARY SEARCH.
+  IF sy-subrc IS INITIAL.
+    w_periods-orig_cost_pc = w_periods-orig_cost_pc + lw_disp_amt-orig_cost_pc.
+    w_periods-orig_cost_vc = w_periods-orig_cost_vc + lw_disp_amt-orig_cost_vc.
+    w_periods-purc_cost_pc = w_periods-purc_cost_pc + lw_disp_amt-purc_cost_pc.
+    w_periods-purc_cost_vc = w_periods-purc_cost_vc + lw_disp_amt-purc_cost_vc.
+    w_periods-accr_int_pc = w_periods-accr_int_pc + lw_disp_amt-accr_int_pc.
+    w_periods-accr_int_vc = w_periods-accr_int_vc + lw_disp_amt-accr_int_vc.
+    w_periods-fee_purc_pc = w_periods-fee_purc_pc + lw_disp_amt-fee_purc_pc.
+    w_periods-fee_purc_vc = w_periods-fee_purc_vc + lw_disp_amt-fee_purc_vc.
+    w_periods-fee_sale_pc = w_periods-fee_sale_pc + lw_disp_amt-fee_sale_pc.
+    w_periods-fee_sale_vc = w_periods-fee_sale_vc + lw_disp_amt-fee_sale_vc.
+    w_periods-cost_sale_pc = w_periods-cost_sale_pc + lw_disp_amt-cost_sale_pc.
+    w_periods-cost_sale_vc = w_periods-cost_sale_vc + lw_disp_amt-cost_sale_vc.
+    w_periods-sett_amt_pc = w_periods-sett_amt_pc + lw_disp_amt-sett_amt_pc.
+    w_periods-sett_amt_vc = w_periods-sett_amt_vc + lw_disp_amt-sett_amt_vc.
+    w_periods-rcgl_mkt_pc = w_periods-rcgl_mkt_pc + lw_disp_amt-rcgl_mkt_pc.
+    w_periods-rcgl_mkt_vc = w_periods-rcgl_mkt_vc + lw_disp_amt-rcgl_mkt_vc.
+    w_periods-rcgl_fx_vc = w_periods-rcgl_fx_vc + lw_disp_amt-rcgl_fx_vc.
+  ENDIF.
+
+  CLEAR lw_disp_amt.
+ENDFORM.                    " DEDUCT_DISP_AMT
+*&---------------------------------------------------------------------*
+*&      Form  SET_DEAL_NUMBER
+*&---------------------------------------------------------------------*
+*       set transaction number
+*----------------------------------------------------------------------*
+FORM set_deal_number .
+
+  DATA lw_periods_temp TYPE t_report.
+
+  w_periods-trans_no = w_periods-deal_number.
+  READ TABLE i_periods INTO lw_periods_temp
+    WITH KEY lot_id = w_periods-lot_id
+             valuation_area = w_periods-valuation_area
+             valuation_class = w_periods-valuation_class
+             bustransid = w_periods-refbustransid.
+  IF sy-subrc IS INITIAL.
+    w_periods-trans_no = lw_periods_temp-deal_number.
+    IF w_periods-trans_no IS INITIAL.
+      w_periods-trans_no = lw_periods_temp-se_deal_number.
+      IF w_periods-trans_no IS INITIAL.
+        w_periods-trans_no = lw_periods_temp-lotgen_dealnr.
+      ENDIF.
+    ENDIF.
+  ELSE.
+    IF w_periods-trans_no IS INITIAL.
+      w_periods-trans_no = w_periods-se_deal_number.
+      IF w_periods-trans_no IS INITIAL.
+        w_periods-trans_no = w_periods-lotgen_dealnr.
+      ENDIF.
+    ENDIF.
+  ENDIF.
+
+  CLEAR lw_periods_temp.
+
+ENDFORM.                    " SET_DEAL_NUMBER
+*&---------------------------------------------------------------------*
+*&      Form  SET_NOM_AMT
+*&---------------------------------------------------------------------*
+*       Set total Nominal amount per transaction number
+*----------------------------------------------------------------------*
+FORM set_nom_amt .
+
+  DATA lw_nom_amt TYPE t_nom_amt.
+  DATA lw_periods TYPE t_report.
+  DATA lw_output  TYPE t_report.
+  DATA lw_vtbfinko TYPE t_vtbfinko.
+  DATA li_vtbfinko TYPE TABLE OF t_vtbfinko.
+  DATA lw_vzzkopo TYPE t_vzzkopo.
+  DATA li_vzzkopo TYPE TABLE OF t_vzzkopo.
+  DATA lw_vtbfhapo TYPE t_vtbfhapo.
+  DATA li_vtbfhapo TYPE TABLE OF t_vtbfhapo.
+  CONSTANTS lc_fixed_rate TYPE skoart VALUE '0100'.
+  CONSTANTS lc_var_rate TYPE skoart VALUE '0101'.
+
+  "Set Transaction Type if blank
+  IF w_periods-trans_type IS INITIAL.
+    READ TABLE i_periods TRANSPORTING NO FIELDS
+      WITH KEY lot_id = w_periods-lot_id
+               valuation_area = w_periods-valuation_area
+               valuation_class = w_periods-valuation_class
+               bustransid = w_periods-refbustransid
+               BINARY SEARCH.
+    IF sy-subrc IS INITIAL.
+      LOOP AT i_periods INTO lw_periods
+        FROM sy-tabix
+        WHERE lot_id = w_periods-lot_id AND
+            valuation_area = w_periods-valuation_area AND
+            valuation_class = w_periods-valuation_class AND
+            bustransid = w_periods-refbustransid AND
+            trans_type <> w_periods-trans_type .
+        w_periods-trans_type = lw_periods-trans_type.
+        EXIT.
+      ENDLOOP.
+    ENDIF.
+    "if no records that have bustransid = refbustransid(record is not disposal amount),
+    "then found other record that have same bustransid
+    IF w_periods-trans_type IS INITIAL.
+      READ TABLE i_periods TRANSPORTING NO FIELDS
+        WITH KEY lot_id = w_periods-lot_id
+                 valuation_area = w_periods-valuation_area
+                 valuation_class = w_periods-valuation_class
+                 bustransid = w_periods-bustransid
+                 BINARY SEARCH.
+      IF sy-subrc IS INITIAL.
+        LOOP AT i_periods INTO lw_periods
+          FROM sy-tabix
+          WHERE lot_id = w_periods-lot_id AND
+                valuation_area = w_periods-valuation_area AND
+                valuation_class = w_periods-valuation_class AND
+                bustransid = w_periods-bustransid AND
+                trans_type <> w_periods-trans_type .
+          w_periods-trans_type = lw_periods-trans_type.
+          EXIT.
+        ENDLOOP.
+      ENDIF.
+    ENDIF.
+    CLEAR lw_periods.
+    IF w_periods-trans_type IS INITIAL.
+      w_periods-trans_type = 'OTHER'.
+    ENDIF.
+  ENDIF.
+
+
+**Set nominal amount
+  READ TABLE i_output INTO lw_output        "to avoid duplicate calculation of nominal amount
+    WITH KEY lot_id = w_periods-lot_id
+             trans_no = w_periods-trans_no
+             valuation_area = w_periods-valuation_area
+             valuation_class = w_periods-valuation_class
+             trans_type = w_periods-trans_type
+             BINARY SEARCH.
+  IF sy-subrc IS NOT INITIAL OR
+    ( sy-subrc IS INITIAL AND lw_output-nom_units IS INITIAL ).
+    IF w_periods-security_id IS INITIAL.    "for money market
+      CLEAR lw_vtbfhapo.
+      REFRESH li_vtbfhapo.
+      li_vtbfhapo = i_vtbfhapo.
+      DELETE li_vtbfhapo
+        WHERE bukrs <> w_periods-bukrs AND
+              rfha <> w_periods-trans_no AND
+              skoart <> '1120' AND
+              sfhazba <> '1100' AND
+              sfhazba <> '1120'.
+      DELETE li_vtbfhapo
+        WHERE dguel_kp > w_periods-dbestand.
+      SORT li_vtbfhapo BY bukrs rfha dguel_kp DESCENDING.
+      READ TABLE li_vtbfhapo INTO lw_vtbfhapo
+        WITH KEY bukrs = w_periods-bukrs
+                 rfha = w_periods-trans_no
+                 BINARY SEARCH.
+      IF sy-subrc IS INITIAL.
+        w_periods-nom_units = lw_vtbfhapo-bnwhr.
+      ENDIF.
+    ELSE.   "for securities
+      READ TABLE i_nom_amt INTO lw_nom_amt
+        WITH KEY lot_id = w_periods-lot_id
+                 deal_number = w_periods-deal_number
+                 lotgen_dealnr = w_periods-lotgen_dealnr
+                 se_deal_number = w_periods-se_deal_number
+                 valuation_area = w_periods-valuation_area
+                 valuation_class = w_periods-valuation_class
+                 BINARY SEARCH.
+      IF sy-subrc IS INITIAL.
+        w_periods-nom_units = lw_nom_amt-nom_amt.
+      ENDIF.
+    ENDIF.
+  ENDIF.
+
+**Set coupon rate
+  READ TABLE i_output INTO lw_output
+    WITH KEY lot_id = w_periods-lot_id
+             trans_no = w_periods-trans_no
+             valuation_area = w_periods-valuation_area
+             valuation_class = w_periods-valuation_class
+             trans_type = w_periods-trans_type
+             BINARY SEARCH.
+  IF sy-subrc IS NOT INITIAL.
+    "coupon rate
+    li_vtbfinko = i_vtbfinko.
+    DELETE li_vtbfinko
+      WHERE bukrs <> w_periods-bukrs OR
+            rfha <> w_periods-trans_no OR
+            ( bukrs = w_periods-bukrs AND
+              rfha = w_periods-trans_no AND
+              dguel_kp > w_periods-dbestand ).
+    "get coupon rate from PKOND where activity(RFHAZU) is the latest(biggest)
+    SORT li_vtbfinko BY rfhazu DESCENDING.
+    READ TABLE li_vtbfinko INTO lw_vtbfinko INDEX 1.
+    IF sy-subrc IS INITIAL.
+      w_periods-pkond = lw_vtbfinko-pkond.
+    ENDIF.
+
+    "if no coupon rate from VTBFINKO, then get from VZZKOPO
+    IF w_periods-pkond IS INITIAL.
+      li_vzzkopo = i_vzzkopo.
+      DELETE li_vzzkopo
+       WHERE rkey1 <> w_periods-security_id OR
+             ( rkey1 = w_periods-security_id AND
+               dguel_kp > w_periods-dbestand ).
+      SORT li_vzzkopo BY dguel_kp DESCENDING.
+      "coupon rate = fixed rate + variable rate
+      READ TABLE li_vzzkopo INTO lw_vzzkopo
+       WITH KEY skoart = lc_fixed_rate.
+      IF sy-subrc IS INITIAL.
+        w_periods-pkond = lw_vzzkopo-pkond.
+      ENDIF.
+      READ TABLE li_vzzkopo INTO lw_vzzkopo
+       WITH KEY skoart = lc_var_rate.
+      IF sy-subrc IS INITIAL.
+        w_periods-pkond = w_periods-pkond + lw_vzzkopo-pkond.
+      ENDIF.
+    ENDIF.
+  ENDIF.
+
+  CLEAR: lw_nom_amt, lw_periods, lw_output, lw_vtbfinko, lw_vzzkopo.
+  FREE: li_vzzkopo, li_vtbfinko.
+
+ENDFORM.                    " SET_NOM_AMT
+*&---------------------------------------------------------------------*
+*&      Form  SET_MASTER_DATA
+*&---------------------------------------------------------------------*
+*       Set fields value from master data
+*----------------------------------------------------------------------*
+FORM set_master_data .
+
+  DATA lw_t001 TYPE t_t001.
+  DATA lw_trgc_val_area TYPE t_trgc_val_area.
+  DATA lw_trgc_val_class_t TYPE trgc_val_class_t.
+  DATA lw_twpob TYPE t_twpob.
+  DATA lw_vtbfha TYPE t_vtbfha.
+  DATA lw_but000 TYPE t_but000.
+  DATA lw_tzpat TYPE t_tzpat.
+  DATA lw_tw22t TYPE t_tw22t.
+  DATA lw_tw20t TYPE t_tw20t.
+  DATA lw_vwpanla TYPE t_vwpanla.
+  DATA lw_sec_add TYPE ztr_sec_add.
+  DATA lw_vtbfhapo TYPE t_vtbfhapo.
+  DATA lw_portfolio TYPE ztr_portfolio.
+  DATA lw_zstatlob  TYPE zstatlob.
+  DATA lw_zifrscd   TYPE zifrscd.
+  DATA lw_zlocallob TYPE zlocallob.
+  DATA lw_zgaapcd   TYPE zgaapcd.
+  DATA lw_cepct     TYPE t_cepct.
+* PIR9000000725 CN_RCG/L Start
+  CONSTANTS lc_sfhazba_0100 TYPE tb_sfhazba VALUE '0100'.
+  CONSTANTS lc_sfhazba_0200 TYPE tb_sfhazba VALUE '0200'.
+* PIR9000000725 CN_RCG/L End
+  "company name
+  READ TABLE i_t001 INTO lw_t001
+  WITH KEY bukrs = w_periods-bukrs
+  BINARY SEARCH.
+  IF sy-subrc IS INITIAL.
+    w_periods-butxt = lw_t001-butxt.
+  ENDIF.
+
+  "name of valuation area
+  READ TABLE i_trgc_val_area
+  INTO lw_trgc_val_area
+  WITH KEY valuation_area = w_periods-valuation_area
+  BINARY SEARCH.
+  IF sy-subrc IS INITIAL.
+    w_periods-val_area_name = lw_trgc_val_area-val_area_name.
+  ENDIF.
+
+  "name of valuation class
+  READ TABLE i_trgc_val_class_t
+  INTO lw_trgc_val_class_t
+  WITH KEY valuation_area = w_periods-valuation_area
+           valuation_class = w_periods-valuation_class
+           BINARY SEARCH.
+  IF sy-subrc IS INITIAL.
+    w_periods-val_class_name = lw_trgc_val_class_t-val_class_name.
+  ENDIF.
+
+  "portfolio name
+  READ TABLE i_twpob INTO lw_twpob
+  WITH KEY bukrs = w_periods-bukrs
+           rportb = w_periods-portfolio
+           BINARY SEARCH.
+  IF sy-subrc IS INITIAL.
+    w_periods-xportb = lw_twpob-xportb.
+  ENDIF.
+
+  "business partner
+  READ TABLE i_vtbfha INTO lw_vtbfha
+  WITH KEY bukrs = w_periods-bukrs
+           rfha = w_periods-trans_no
+           BINARY SEARCH.
+  IF sy-subrc IS INITIAL.
+    w_periods-kontrh = lw_vtbfha-kontrh.
+    w_periods-zuond = lw_vtbfha-zuond.
+
+    READ TABLE i_but000 INTO lw_but000
+    WITH KEY partner = lw_vtbfha-kontrh
+    BINARY SEARCH.
+    IF sy-subrc IS INITIAL.
+      w_periods-name_org1 = lw_but000-name_org1.
+    ENDIF.
+
+    "Settlement Date
+    READ TABLE i_vtbfhapo INTO lw_vtbfhapo
+    WITH KEY bukrs = w_periods-bukrs
+             rfha = w_periods-trans_no
+             rfhazu = lw_vtbfha-rfhazul
+* PIR9000000725 CN_RCG/L Start
+*             SFHAZBA = '0100'
+             sfhazba = lc_sfhazba_0100
+* PIR9000000725 CN_RCG/L End
+             BINARY SEARCH.
+    IF sy-subrc IS INITIAL.
+      w_periods-dzterm = lw_vtbfhapo-dzterm.
+    ELSE.
+      CLEAR lw_vtbfhapo.
+      READ TABLE i_vtbfhapo INTO lw_vtbfhapo
+      WITH KEY bukrs = w_periods-bukrs
+               rfha = w_periods-trans_no
+               rfhazu = lw_vtbfha-rfhazul
+* PIR9000000725 CN_RCG/L Start
+*               SFHAZBA = '0200'
+               sfhazba = lc_sfhazba_0200
+* PIR9000000725 CN_RCG/L End
+               BINARY SEARCH.
+      IF sy-subrc IS INITIAL.
+        w_periods-dzterm = lw_vtbfhapo-dzterm.
+      ENDIF.
+    ENDIF.
+  ENDIF.
+
+  "product type name
+  READ TABLE i_tzpat INTO lw_tzpat
+  WITH KEY gsart = w_periods-gsart
+  BINARY SEARCH.
+  IF sy-subrc IS INITIAL.
+    w_periods-ltx = lw_tzpat-ltx.
+  ENDIF.
+
+  "sec.classification name
+  READ TABLE i_tw22t INTO lw_tw22t
+  WITH KEY alwpkl = w_periods-alwpkl
+  BINARY SEARCH.
+  IF sy-subrc IS INITIAL.
+    w_periods-xlangbez = lw_tw22t-xlangbez.
+  ENDIF.
+
+  "sec.type name
+  READ TABLE i_tw20t INTO lw_tw20t
+  WITH KEY swerttyp = w_periods-swerttyp
+  BINARY SEARCH.
+  IF sy-subrc IS INITIAL.
+    w_periods-sec_type_nm = lw_tw20t-xlangbez.
+  ENDIF.
+
+  "long name
+  READ TABLE i_vwpanla INTO lw_vwpanla
+  WITH KEY ranl = w_periods-security_id
+  BINARY SEARCH.
+  IF sy-subrc IS INITIAL.
+    w_periods-xallb = lw_vwpanla-xallb.
+    "mac_type and ny_sec_type
+    READ TABLE i_sec_add INTO lw_sec_add
+    WITH KEY security_id = lw_vwpanla-ranl
+    BINARY SEARCH.
+    IF sy-subrc IS INITIAL.
+      w_periods-mac_type = lw_sec_add-mac_type.
+      w_periods-ny_sec_type = lw_sec_add-ny_sec_type.
+    ENDIF.
+  ENDIF.
+
+  READ TABLE i_portfolio INTO lw_portfolio
+  WITH KEY comp_code = w_periods-bukrs
+           portfolio = w_periods-portfolio
+           BINARY SEARCH.
+  IF sy-subrc IS INITIAL.
+    w_periods-hk_reg_lob = lw_portfolio-zzuser01.    "HK Regulatory LOB
+    w_periods-ifrs = lw_portfolio-zzuser02.          "IFRS
+    w_periods-local_reg_lob = lw_portfolio-zzuser03. "Local Regulatory LOB
+    w_periods-gaap_cd = lw_portfolio-zzuser06.       "GAAP Code
+    w_periods-prctr = lw_portfolio-prctr.            "Profit center
+
+    "HK Regulatory LOB Name
+    READ TABLE i_zstatlob INTO lw_zstatlob
+    WITH KEY zzuser01 = lw_portfolio-zzuser01
+    BINARY SEARCH.
+    IF sy-subrc IS INITIAL.
+      w_periods-hk_reg_lob_nm = lw_zstatlob-text50.
+    ENDIF.
+
+    "IFRS Name
+    READ TABLE i_zifrscd INTO lw_zifrscd
+    WITH KEY zzuser02 = lw_portfolio-zzuser02
+    BINARY SEARCH.
+    IF sy-subrc IS INITIAL.
+      w_periods-ifrs_nm = lw_zifrscd-text50.
+    ENDIF.
+
+    "Local Regulatory LOB Name
+    READ TABLE i_zlocallob INTO lw_zlocallob
+    WITH KEY zzuser03 = lw_portfolio-zzuser03
+    BINARY SEARCH.
+    IF sy-subrc IS INITIAL.
+      w_periods-local_reg_lob_nm = lw_zlocallob-text50.
+    ENDIF.
+
+    "GAAP Code Name
+    READ TABLE i_zgaapcd INTO lw_zgaapcd
+    WITH KEY zzuser06 = lw_portfolio-zzuser06
+    BINARY SEARCH.
+    IF sy-subrc IS INITIAL.
+      w_periods-gaap_cd_nm = lw_zgaapcd-text50.
+    ENDIF.
+
+    "Profit center name
+    READ TABLE i_cepct INTO lw_cepct
+    WITH KEY prctr = lw_portfolio-prctr
+    BINARY SEARCH.
+    IF sy-subrc IS INITIAL.
+      w_periods-ktext = lw_cepct-ktext.
+    ENDIF.
+  ENDIF.
+
+  CLEAR: lw_t001, lw_trgc_val_area, lw_trgc_val_class_t, lw_twpob,
+         lw_vtbfha, lw_but000, lw_tzpat, lw_tw22t, lw_tw20t, lw_vwpanla,
+         lw_sec_add, lw_vtbfhapo, lw_portfolio, lw_zstatlob, lw_zifrscd,
+         lw_zlocallob, lw_zgaapcd, lw_cepct.
+
+ENDFORM.                    " SET_MASTER_DATA
+*&---------------------------------------------------------------------*
+*&      Form  SET_POST_STAT
+*&---------------------------------------------------------------------*
+*       set posting status in text
+*----------------------------------------------------------------------*
+FORM set_post_stat .
+
+  IF w_periods-trl_bookingstate IS NOT INITIAL.
+    CALL FUNCTION 'CONVERSION_EXIT_TRLBS_OUTPUT'
+      EXPORTING
+        input  = w_periods-trl_bookingstate
+      IMPORTING
+        output = w_periods-posting_status.
+  ENDIF.
+
+ENDFORM.                    " SET_POST_STAT
+*&---------------------------------------------------------------------*
+*&      Form  GET_RC_DATA
+*&---------------------------------------------------------------------*
+*       Get all RC data
+*----------------------------------------------------------------------*
+FORM get_rc_data USING lp_vc TYPE tpm_amount
+                       lp_rc TYPE tpm_amount.
+
+  CONSTANTS lc_local_curr TYPE waers VALUE 'USD'.
+
+  IF lp_vc IS NOT INITIAL.
+    CALL FUNCTION 'CONVERT_TO_LOCAL_CURRENCY'
+      EXPORTING
+*       CLIENT           = SY-MANDT
+        date             = w_periods-dbestand
+        foreign_amount   = lp_vc
+        foreign_currency = w_periods-svwhr
+        local_currency   = lc_local_curr
+        rate             = 0
+        type_of_rate     = 'M'
+        read_tcurr       = 'X'
+      IMPORTING
+        local_amount     = lp_rc
+      EXCEPTIONS
+        no_rate_found    = 1
+        overflow         = 2
+        no_factors_found = 3
+        no_spread_found  = 4
+        derived_2_times  = 5
+        OTHERS           = 6.
+    IF sy-subrc <> 0.
+      "error when convert amount to local currency
+      MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+              WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+    ENDIF.
+  ENDIF.
+
+ENDFORM.                    " GET_RC_DATA
+
+"CR237 begin
+*&---------------------------------------------------------------------*
+*&      Form  DISPLAY_DATA
+*&---------------------------------------------------------------------*
+*       Display data
+*----------------------------------------------------------------------*
+*FORM DISPLAY_DATA .
+*
+*  PERFORM PREPARE_LAYOUT.
+*  PERFORM BUILD_EVENT.
+*  PERFORM BUILD_FIELDCAT.
+*
+*  SORT I_OUTPUT BY BUKRS PORTFOLIO VALUATION_AREA SECURITY_ID VALUATION_CLASS GSART.
+*
+*  CALL FUNCTION 'REUSE_ALV_GRID_DISPLAY'
+*    EXPORTING
+*      I_CALLBACK_PROGRAM     = SY-CPROG
+*      IS_LAYOUT              = W_LAYOUT
+*      I_CALLBACK_TOP_OF_PAGE = 'TOP_OF_PAGE'
+*      I_SAVE                 = 'A'
+*      IT_FIELDCAT            = I_FIELDCAT
+*      IT_EVENTS              = I_EVENTS[]
+*    TABLES
+*      T_OUTTAB               = I_OUTPUT
+*    EXCEPTIONS
+*      PROGRAM_ERROR          = 1
+*      OTHERS                 = 2.
+*  IF SY-SUBRC <> 0.
+*    "error when display report in alv format
+*    MESSAGE ID SY-MSGID TYPE SY-MSGTY NUMBER SY-MSGNO
+*          WITH SY-MSGV1 SY-MSGV2 SY-MSGV3 SY-MSGV4.
+*  ENDIF.
+*
+*ENDFORM.                    " DISPLAY_DATA
+**&---------------------------------------------------------------------*
+**&      Form  PREPARE_LAYOUT
+**&---------------------------------------------------------------------*
+**       prepare layout
+**----------------------------------------------------------------------*
+*FORM PREPARE_LAYOUT .
+*
+*  W_LAYOUT-COLWIDTH_OPTIMIZE = 'X'.
+*  W_LAYOUT-ZEBRA = 'X'.
+*  W_LAYOUT-WINDOW_TITLEBAR = SY-TITLE.
+*
+*ENDFORM.                    " PREPARE_LAYOUT
+**&---------------------------------------------------------------------*
+**&      Form  BUILD_EVENT
+**&---------------------------------------------------------------------*
+**       build event
+**----------------------------------------------------------------------*
+*FORM BUILD_EVENT .
+*
+*  REFRESH I_EVENTS.
+*  W_EVENTS-NAME = SLIS_EV_TOP_OF_LIST.
+*  W_EVENTS-FORM = SLIS_EV_TOP_OF_LIST.
+*  APPEND W_EVENTS TO I_EVENTS .
+*
+*ENDFORM.                    " BUILD_EVENT
+**&---------------------------------------------------------------------*
+**&      Form  BUILD_FIELDCAT
+**&---------------------------------------------------------------------*
+**       build field catalog for alv format
+**----------------------------------------------------------------------*
+*FORM BUILD_FIELDCAT .
+*
+*  CONSTANTS: LC_BUKRS               TYPE SLIS_FIELDNAME VALUE 'BUKRS',
+*             LC_BUTXT               TYPE SLIS_FIELDNAME VALUE 'BUTXT',
+*             LC_VAREA               TYPE SLIS_FIELDNAME VALUE 'VALUATION_AREA',
+*             LC_VANAME              TYPE SLIS_FIELDNAME VALUE 'VAL_AREA_NAME',
+*             LC_VCLASS              TYPE SLIS_FIELDNAME VALUE 'VALUATION_CLASS',
+*             LC_VACL_NAME           TYPE SLIS_FIELDNAME VALUE 'VAL_CLASS_NAME',
+*             LC_PORT                TYPE SLIS_FIELDNAME VALUE 'PORTFOLIO',
+*             LC_XPORTB              TYPE SLIS_FIELDNAME VALUE 'XPORTB',
+*             LC_SECACC              TYPE SLIS_FIELDNAME VALUE 'SECURITY_ACCOUNT',
+*             LC_KONTRH              TYPE SLIS_FIELDNAME VALUE 'KONTRH',
+*             LC_BP_NAME             TYPE SLIS_FIELDNAME VALUE 'NAME_ORG1',
+*             LC_GSART               TYPE SLIS_FIELDNAME VALUE 'GSART',
+*             LC_LTX                 TYPE SLIS_FIELDNAME VALUE 'LTX',
+*             LC_ALWPKL              TYPE SLIS_FIELDNAME VALUE 'ALWPKL',
+*             LC_XLANGBEZ            TYPE SLIS_FIELDNAME VALUE 'XLANGBEZ',
+*             LC_SWERTTYP            TYPE SLIS_FIELDNAME VALUE 'SWERTTYP',
+*             LC_SEC_TYPE_NM         TYPE SLIS_FIELDNAME VALUE 'SEC_TYPE_NM',
+*             LC_SECURITY_ID         TYPE SLIS_FIELDNAME VALUE 'SECURITY_ID',
+*             LC_XALLB               TYPE SLIS_FIELDNAME VALUE 'XALLB',
+*             LC_MAC_TYPE            TYPE SLIS_FIELDNAME VALUE 'MAC_TYPE',
+*             LC_NY_SEC_TYPE         TYPE SLIS_FIELDNAME VALUE 'NY_SEC_TYPE',
+*             LC_LOT_ID              TYPE SLIS_FIELDNAME VALUE 'LOT_ID',
+*             LC_TRANS_NO            TYPE SLIS_FIELDNAME VALUE 'TRANS_NO',
+*             LC_SBWHR               TYPE SLIS_FIELDNAME VALUE 'SBWHR',
+*             LC_SVWHR               TYPE SLIS_FIELDNAME VALUE 'SVWHR',
+*             LC_DBESTAND            TYPE SLIS_FIELDNAME VALUE 'DBESTAND',
+*             LC_DZTERM              TYPE SLIS_FIELDNAME VALUE 'DZTERM',
+*             LC_DELFZ               TYPE SLIS_FIELDNAME VALUE 'DELFZ',
+*             LC_HK_REG_LOB          TYPE SLIS_FIELDNAME VALUE 'HK_REG_LOB',
+*             LC_HK_REG_LOB_NM       TYPE SLIS_FIELDNAME VALUE 'HK_REG_LOB_NM',
+*             LC_IFRS                TYPE SLIS_FIELDNAME VALUE 'IFRS',
+*             LC_IFRS_NM             TYPE SLIS_FIELDNAME VALUE 'IFRS_NM',
+*             LC_LOCAL_REG_LOB       TYPE SLIS_FIELDNAME VALUE 'LOCAL_REG_LOB',
+*             LC_LOCAL_REG_LOB_NM    TYPE SLIS_FIELDNAME VALUE 'LOCAL_REG_LOB_NM',
+*             LC_GAAP_CD             TYPE SLIS_FIELDNAME VALUE 'GAAP_CD',
+*             LC_GAAP_CD_NM          TYPE SLIS_FIELDNAME VALUE 'GAAP_CD_NM',
+*             LC_PRCTR               TYPE SLIS_FIELDNAME VALUE 'PRCTR',
+*             LC_PRCTR_NM            TYPE SLIS_FIELDNAME VALUE 'KTEXT',
+*             LC_ZUOND               TYPE SLIS_FIELDNAME VALUE 'ZUOND',
+*             LC_POSTING_STATUS      TYPE SLIS_FIELDNAME VALUE 'POSTING_STATUS',
+*             LC_TRANS_TYPE          TYPE SLIS_FIELDNAME VALUE 'TRANS_TYPE',
+*             LC_NOM_UNITS           TYPE SLIS_FIELDNAME VALUE 'NOM_UNITS',
+*             LC_PKOND               TYPE SLIS_FIELDNAME VALUE 'PKOND',
+*             LC_ORIG_COST_PC        TYPE SLIS_FIELDNAME VALUE 'ORIG_COST_PC',
+*             LC_ORIG_COST_VC        TYPE SLIS_FIELDNAME VALUE 'ORIG_COST_VC',
+*             LC_ORIG_COST_RC        TYPE SLIS_FIELDNAME VALUE 'ORIG_COST_RC',
+*             LC_PURC_COST_PC        TYPE SLIS_FIELDNAME VALUE 'PURC_COST_PC',
+*             LC_PURC_COST_VC        TYPE SLIS_FIELDNAME VALUE 'PURC_COST_VC',
+*             LC_PURC_COST_RC        TYPE SLIS_FIELDNAME VALUE 'PURC_COST_RC',
+*             LC_ACCR_INT_PC         TYPE SLIS_FIELDNAME VALUE 'ACCR_INT_PC',
+*             LC_ACCR_INT_VC         TYPE SLIS_FIELDNAME VALUE 'ACCR_INT_VC',
+*             LC_ACCR_INT_RC         TYPE SLIS_FIELDNAME VALUE 'ACCR_INT_RC',
+*             LC_FEE_PURC_PC         TYPE SLIS_FIELDNAME VALUE 'FEE_PURC_PC',
+*             LC_FEE_PURC_VC         TYPE SLIS_FIELDNAME VALUE 'FEE_PURC_VC',
+*             LC_FEE_PURC_RC         TYPE SLIS_FIELDNAME VALUE 'FEE_PURC_RC',
+*             LC_FEE_SALE_PC         TYPE SLIS_FIELDNAME VALUE 'FEE_SALE_PC',
+*             LC_FEE_SALE_VC         TYPE SLIS_FIELDNAME VALUE 'FEE_SALE_VC',
+*             LC_FEE_SALE_RC         TYPE SLIS_FIELDNAME VALUE 'FEE_SALE_RC',
+*             LC_COST_SALE_PC        TYPE SLIS_FIELDNAME VALUE 'COST_SALE_PC',
+*             LC_COST_SALE_VC        TYPE SLIS_FIELDNAME VALUE 'COST_SALE_VC',
+*             LC_COST_SALE_RC        TYPE SLIS_FIELDNAME VALUE 'COST_SALE_RC',
+*             LC_SETT_AMT_PC         TYPE SLIS_FIELDNAME VALUE 'SETT_AMT_PC',
+*             LC_SETT_AMT_VC         TYPE SLIS_FIELDNAME VALUE 'SETT_AMT_VC',
+*             LC_SETT_AMT_RC         TYPE SLIS_FIELDNAME VALUE 'SETT_AMT_RC',
+*             LC_RCGL_MKT_PC         TYPE SLIS_FIELDNAME VALUE 'RCGL_MKT_PC',
+*             LC_RCGL_MKT_VC         TYPE SLIS_FIELDNAME VALUE 'RCGL_MKT_VC',
+*             LC_RCGL_MKT_RC         TYPE SLIS_FIELDNAME VALUE 'RCGL_MKT_RC',
+*             LC_RCGL_FX_VC          TYPE SLIS_FIELDNAME VALUE 'RCGL_FX_VC',
+*             LC_RCGL_FX_RC          TYPE SLIS_FIELDNAME VALUE 'RCGL_FX_RC',
+*             LC_TOT_RCGL_VC         TYPE SLIS_FIELDNAME VALUE 'TOT_RCGL_VC',
+*             LC_TOT_RCGL_RC         TYPE SLIS_FIELDNAME VALUE 'TOT_RCGL_RC',
+*             LC_4                   TYPE DD03P-OUTPUTLEN VALUE '4'.
+*
+** company code
+*  PERFORM ADD_FIELDCAT USING LC_BUKRS          'Company Code'(100)    LC_4 '' '' 'CoCd'(101) text-100.
+** company name
+*  PERFORM ADD_FIELDCAT USING LC_BUTXT          'Company Name'(102)    '25' '' '' 'CoName'(103) text-102.
+** valuation area
+*  PERFORM ADD_FIELDCAT USING LC_VAREA          'Valuation Area'(104)  '3' '' '' 'VA'(105) text-104.
+** Name of Valuation Area
+*  PERFORM ADD_FIELDCAT USING LC_VANAME         'Name of Valuation Area'(106)  '60' '' '' 'VA Name'(107) text-107.
+** Valuation class
+*  PERFORM ADD_FIELDCAT USING LC_VCLASS         'Valuation Class'(109)  LC_4 '' '' 'ValCl'(110) 'Val Class'(111).
+** Name of Valuation Class
+*  PERFORM ADD_FIELDCAT USING LC_VACL_NAME      'Name of Valuation Class'(112)  '60' '' '' 'ValCl Name'(113) text-113.
+** Portfolio
+*  PERFORM ADD_FIELDCAT USING LC_PORT      'Portfolio'(114)  '10' '' '' text-114 text-114.
+** Portfolio name
+*  PERFORM ADD_FIELDCAT USING LC_XPORTB      'Portfolio Name'(115)  '30' '' '' 'Port Name'(116) text-115.
+** Securities Account
+*  PERFORM ADD_FIELDCAT USING LC_SECACC      'Securities Account'(117)  '10' '' '' 'Sec.Acct'(118) text-117.
+** Business Partner
+*  PERFORM ADD_FIELDCAT USING LC_KONTRH      'Business Partner'(119)  '10' '' '' 'Partner'(120) text-120.
+** Business Partner Name
+*  PERFORM ADD_FIELDCAT USING LC_BP_NAME      'Business Partner Name'(121)  '40' '' '' 'Partner Nm'(122) 'Partner Name'(123).
+** Product Type
+*  PERFORM ADD_FIELDCAT USING LC_GSART      'Product Type'(124)  '3' '' '' 'Prod.Type'(125) text-124.
+** Product Type Name
+*  PERFORM ADD_FIELDCAT USING LC_LTX      'Product Type Name'(126)  '30' '' '' 'ProdTy Nm'(127) text-126.
+** Sec.Classification
+*  PERFORM ADD_FIELDCAT USING LC_ALWPKL      'Sec. Classification'(128)  '3' '' '' 'Classfic.'(129) text-128.
+** Sec. Classification Name
+*  PERFORM ADD_FIELDCAT USING LC_XLANGBEZ      'Sec. Classification Name'(130)  '60' '' '' 'Class. Nm'(132) 'Sec. Class Name'(131).
+** Security Type
+*  PERFORM ADD_FIELDCAT USING LC_SWERTTYP      'Security Type'(133)  '1' '' '' 'Sec. Type'(134) text-133.
+** Security Type Name
+*  PERFORM ADD_FIELDCAT USING LC_SEC_TYPE_NM      'Security Type Name'(135)  '60' '' '' 'Sec.Typ NM'(136) text-135.
+** ID number
+*  PERFORM ADD_FIELDCAT USING LC_SECURITY_ID      'ID number'(137)  '13' '' '' text-137 text-137.
+** Long name
+*  PERFORM ADD_FIELDCAT USING LC_XALLB      'Long name'(138)  '60' '' '' text-138 text-138.
+** MAC Type
+*  PERFORM ADD_FIELDCAT USING LC_MAC_TYPE      'MAC Type'(139)  '15' '' '' text-139 text-139.
+** NY Sec Type
+*  PERFORM ADD_FIELDCAT USING LC_NY_SEC_TYPE      'NY Sec Type'(140)  '15' '' '' 'NY Sec'(141) text-140.
+** Lot ID
+*  PERFORM ADD_FIELDCAT USING LC_LOT_ID      'Lot ID'(142)  '32' '' '' text-142 text-142.
+** Lot-Generating Transaction No
+*  PERFORM ADD_FIELDCAT USING LC_TRANS_NO      'Transaction No'(143)  '10' '' '' 'Transactn'(144) text-143.
+** Position Currency
+*  PERFORM ADD_FIELDCAT USING LC_SBWHR      'Position Currency'(146)  '5' '' '' 'PC'(147) text-146.
+** Valuation Currency
+*  PERFORM ADD_FIELDCAT USING LC_SVWHR      'Valuation Currency'(148)  '5' '' '' 'VC'(149) text-148.
+** Trade Date (DBESTAND)
+*  PERFORM ADD_FIELDCAT USING LC_DBESTAND      'Trade Date'(150)  '10' '' '' text-150 text-150.
+** Settlement Date (DZTERM)
+*  PERFORM ADD_FIELDCAT USING LC_DZTERM      'Settlement Date'(151)  '10' '' '' 'Stl Date'(152) text-151.
+** Maturity Date (DELFZ)
+*  PERFORM ADD_FIELDCAT USING LC_DELFZ      'Maturity Date'(153)  '10' '' '' 'Mat. Date'(154) text-153.
+** HK Regulatory LoB
+*  PERFORM ADD_FIELDCAT USING LC_HK_REG_LOB      'HK Regulatory LoB'(155)  '10' '' '' 'HK LoB'(156) text-155.
+** HK Regulatory LoB Name
+*  PERFORM ADD_FIELDCAT USING LC_HK_REG_LOB_NM      'HK Regulatory LoB Name'(157)  '50' '' '' 'HKLoB Name'(158) 'HKLoB Name'(158).
+** IFRS
+*  PERFORM ADD_FIELDCAT USING LC_IFRS      'IFRS'(159)  '10' '' '' text-159 text-159.
+** IFRS Name
+*  PERFORM ADD_FIELDCAT USING LC_IFRS_NM      'IFRS Name'(160)  '50' '' '' text-160 text-160.
+** Local Regulatory LoB
+*  PERFORM ADD_FIELDCAT USING LC_LOCAL_REG_LOB      'Local Regulatory LoB'(161)  '10' '' '' 'Local LoB'(162) text-161.
+** Local Regulatory LoB Name
+*  PERFORM ADD_FIELDCAT USING LC_LOCAL_REG_LOB_NM      'Local Regulatory LoB Name'(163)  '50' '' '' 'Local Name'(165) 'Local LoB Name'(164).
+** GAAP Code
+*  PERFORM ADD_FIELDCAT USING LC_GAAP_CD      'GAAP Code'(166)  '10' '' '' 'GAAP'(167) text-166.
+** GAAP Code Name
+*  PERFORM ADD_FIELDCAT USING LC_GAAP_CD_NM      'GAAP Code Name'(168)  '50' '' '' 'GAAP Name'(169) text-169.
+** Profit Center
+*  PERFORM ADD_FIELDCAT USING LC_PRCTR      'Profit Center'(170)  '10' '' '' 'Profit Ctr'(171) text-170.
+** Profit Center Name
+*  PERFORM ADD_FIELDCAT USING LC_PRCTR_NM      'Profit Center Name'(172)  '20' '' '' 'ProCtr Nm'(174) text-172.
+** Assignment
+*  PERFORM ADD_FIELDCAT USING LC_ZUOND      'Assignment'(175)  '18' '' '' text-175 text-175.
+** Posting Status
+*  PERFORM ADD_FIELDCAT USING LC_POSTING_STATUS      'Posting Status'(176)  '1' '' '' 'Status'(177) text-176.
+** Transaction Type
+*  PERFORM ADD_FIELDCAT USING LC_TRANS_TYPE      'Transaction Type'(178)  '20' '' '' 'TType'(179) text-178.
+** Nominal/Units
+*  PERFORM ADD_FIELDCAT USING LC_NOM_UNITS      'Nominal/Units'(180)  '29' '' '' 'Nom/Units'(181) text-180.
+** Coupon Rate
+*  PERFORM ADD_FIELDCAT USING LC_PKOND      'Coupon Rate'(182)  '12' '' '' 'Coupon'(183) text-182.
+*  IF P_POS IS NOT INITIAL.
+** Original Cost in PC
+*    PERFORM ADD_FIELDCAT USING LC_ORIG_COST_PC      'Original Cost in PC'(184)  '29' '' '' 'O Cost PC'(185) 'Original Cost PC'(186).
+*  ENDIF.
+*  IF P_VAL IS NOT INITIAL.
+** Original Cost in VC
+*    PERFORM ADD_FIELDCAT USING LC_ORIG_COST_VC      'Original Cost in VC'(187)  '29' '' '' 'O Cost VC'(188) 'Original Cost VC'(189).
+*  ENDIF.
+*  IF P_REP IS NOT INITIAL.
+** Original Cost in RC
+*    PERFORM ADD_FIELDCAT USING LC_ORIG_COST_RC      'Original Cost in RC'(190)  '29' '' '' 'O Cost RC'(191) 'Original Cost RC'(192).
+*  ENDIF.
+*  IF P_POS IS NOT INITIAL.
+** Purchase Cost (Capitalized) in PC
+*    PERFORM ADD_FIELDCAT USING LC_PURC_COST_PC      'Purchase Cost (Capitalized) in PC'(193)  '29' '' '' 'P Cost PC'(194) 'Purchase Cost PC'(195).
+*  ENDIF.
+*  IF P_VAL IS NOT INITIAL.
+** Purchase Cost (Capitalized) in VC
+*    PERFORM ADD_FIELDCAT USING LC_PURC_COST_VC      'Purchase Cost (Capitalized) in VC'(196)  '29' '' '' 'P Cost VC'(197) 'Purchase Cost VC'(198).
+*  ENDIF.
+*  IF P_REP IS NOT INITIAL.
+** Purchase Cost (Capitalized) in RC
+*    PERFORM ADD_FIELDCAT USING LC_PURC_COST_RC      'Purchase Cost (Capitalized) in RC'(199)  '29' '' '' 'P Cost RC'(200) 'Purchase Cost RC'(201).
+*  ENDIF.
+*  IF P_POS IS NOT INITIAL.
+** Accrued Interest in PC
+*    PERFORM ADD_FIELDCAT USING LC_ACCR_INT_PC      'Accrued Interest in PC'(202)  '29' '' '' 'AccrInt PC'(204) 'Accrued Interest PC'(203).
+*  ENDIF.
+*  IF P_VAL IS NOT INITIAL.
+** Accrued Interest in VC
+*    PERFORM ADD_FIELDCAT USING LC_ACCR_INT_VC      'Accrued Interest in VC'(205)  '29' '' '' 'AccrInt VC'(206) 'Accrued Interest VC'(207).
+*  ENDIF.
+*  IF P_REP IS NOT INITIAL.
+** Accrued Interest in RC
+*    PERFORM ADD_FIELDCAT USING LC_ACCR_INT_RC      'Accrued Interest in RC'(208)  '29' '' '' 'AccrInt RC'(209) 'Accrued Interest RC'(210).
+*  ENDIF.
+*  IF P_POS IS NOT INITIAL.
+** Handling Fee on Purchase in PC
+*    PERFORM ADD_FIELDCAT USING LC_FEE_PURC_PC      'Handling Fee on Purchase in PC'(211)  '29' '' '' 'Fee P PC'(213) 'Fee on Purchase PC'(212).
+*  ENDIF.
+*  IF P_VAL IS NOT INITIAL.
+** Handling Fee on Purchase in VC
+*    PERFORM ADD_FIELDCAT USING LC_FEE_PURC_VC      'Handling Fee on Purchase in VC'(214)  '29' '' '' 'Fee P VC'(215) 'Fee on Purchase VC'(216).
+*  ENDIF.
+*  IF P_REP IS NOT INITIAL.
+** Handling Fee on Purchase in RC
+*    PERFORM ADD_FIELDCAT USING LC_FEE_PURC_RC      'Handling Fee on Purchase in RC'(217)  '29' '' '' 'Fee P RC'(218) 'Fee on Purchase RC'(219).
+*  ENDIF.
+*  IF P_POS IS NOT INITIAL.
+** Handling Fee on Sales in PC
+*    PERFORM ADD_FIELDCAT USING LC_FEE_SALE_PC      'Handling Fee on Sales in PC'(220)  '29' '' '' 'Fee S PC'(221) 'Fee on Sales PC'(222).
+*  ENDIF.
+*  IF P_VAL IS NOT INITIAL.
+** Handling Fee on Sales in VC
+*    PERFORM ADD_FIELDCAT USING LC_FEE_SALE_VC      'Handling Fee on Sales in VC'(223)  '29' '' '' 'Fee S VC'(224) 'Fee on Sales VC'(225).
+*  ENDIF.
+*  IF P_REP IS NOT INITIAL.
+** Handling Fee on Sales in RC
+*    PERFORM ADD_FIELDCAT USING LC_FEE_SALE_RC      'Handling Fee on Sales in RC'(226)  '29' '' '' 'Fee S RC'(227) 'Fee on Sales RC'(228).
+*  ENDIF.
+*  IF P_POS IS NOT INITIAL.
+** Cost of Sale in PC
+*    PERFORM ADD_FIELDCAT USING LC_COST_SALE_PC      'Cost of Sales in PC'(229)  '29' '' '' 'COS PC'(230) text-229.
+*  ENDIF.
+*  IF P_VAL IS NOT INITIAL.
+** Cost of Sale in VC
+*    PERFORM ADD_FIELDCAT USING LC_COST_SALE_VC      'Cost of Sales in VC'(231)  '29' '' '' 'COS VC'(232) text-231.
+*  ENDIF.
+*  IF P_REP IS NOT INITIAL.
+** Cost of Sale in RC
+*    PERFORM ADD_FIELDCAT USING LC_COST_SALE_RC      'Cost of Sales in RC'(233)  '29' '' '' 'COS RC'(234) text-233.
+*  ENDIF.
+*  IF P_POS IS NOT INITIAL.
+** Settlement Amount in PC
+*    PERFORM ADD_FIELDCAT USING LC_SETT_AMT_PC      'Settlement Amount in PC'(235)  '29' '' '' 'Settle PC'(236) 'Settlement Amount PC'(237).
+*  ENDIF.
+*  IF P_VAL IS NOT INITIAL.
+** Settlement Amount in VC
+*    PERFORM ADD_FIELDCAT USING LC_SETT_AMT_VC      'Settlement Amount in VC'(238)  '29' '' '' 'Settle VC'(239) 'Settlement Amount VC'(240).
+*  ENDIF.
+*  IF P_REP IS NOT INITIAL.
+** Settlement Amount in RC
+*    PERFORM ADD_FIELDCAT USING LC_SETT_AMT_RC      'Settlement Amount in RC'(241)  '29' '' '' 'Settle RC'(242) 'Settlement Amount RC'(243).
+*  ENDIF.
+*  IF P_POS IS NOT INITIAL.
+** RCG/(L) (Market) in PC
+*    PERFORM ADD_FIELDCAT USING LC_RCGL_MKT_PC      'RCG/(L) (Market) in PC'(244)  '29' '' '' 'RCGL M PC'(245) 'RCG/(L) (Mkt) PC'(246).
+*  ENDIF.
+*  IF P_VAL IS NOT INITIAL.
+** RCG/(L) (Market) in VC
+*    PERFORM ADD_FIELDCAT USING LC_RCGL_MKT_VC      'RCG/(L) (Market) in VC'(247)  '29' '' '' 'RCGL M VC'(248) 'RCG/(L) (Mkt) VC'(249).
+*  ENDIF.
+*  IF P_REP IS NOT INITIAL.
+** RCG/(L) (Market) in RC
+*    PERFORM ADD_FIELDCAT USING LC_RCGL_MKT_RC      'RCG/(L) (Market) in RC'(250)  '29' '' '' 'RCGL M RC'(251) 'RCG/(L) (Mkt) RC'(252).
+*  ENDIF.
+*  IF P_VAL IS NOT INITIAL.
+** RCG/(L) (FX) in VC
+*    PERFORM ADD_FIELDCAT USING LC_RCGL_FX_VC      'RCG/(L) (FX) in VC'(253)  '29' '' '' 'RCGL FX VC'(254) 'RCG/(L) (FX) VC'(255).
+*  ENDIF.
+*  IF P_REP IS NOT INITIAL.
+** RCG/(L) (FX) in RC
+*    PERFORM ADD_FIELDCAT USING LC_RCGL_FX_RC      'RCG/(L) (FX) in RC'(256)  '29' '' '' 'RCGL FX RC'(257) 'RCG/(L) (FX) RC'(258).
+*  ENDIF.
+*  IF P_VAL IS NOT INITIAL.
+** Total RCG/(L) in VC
+*    PERFORM ADD_FIELDCAT USING LC_TOT_RCGL_VC      'Total RCG/(L) in VC'(259)  '29' '' '' 'Total VC'(260) 'Total RCG/(L) VC'(261).
+*  ENDIF.
+*  IF P_REP IS NOT INITIAL.
+** Total RCG/(L) in RC
+*    PERFORM ADD_FIELDCAT USING LC_TOT_RCGL_RC      'Total RCG/(L) in RC'(262)  '29' '' '' 'Total RC'(263) 'Total RCG/(L) RC'(264).
+*  ENDIF.
+*
+*ENDFORM.                    " BUILD_FIELDCAT
+**&---------------------------------------------------------------------*
+**&      Form  ADD_FIELDCAT
+**&---------------------------------------------------------------------*
+**       add field catalog to i_fieldcat internal table
+**----------------------------------------------------------------------*
+*FORM ADD_FIELDCAT  USING    LP_FIELDNAME   TYPE SLIS_FIELDNAME
+*                            LP_TEXT        TYPE C
+*                            LP_LEN         TYPE DD03P-OUTPUTLEN
+*                            LP_CFIELDNAME  TYPE SLIS_FIELDNAME
+*                            LP_CTABNAME    TYPE SLIS_TABNAME
+*                            LP_SELTEXT_S   TYPE DD03P-SCRTEXT_S
+*                            LP_SELTEXT_M   TYPE DD03P-SCRTEXT_M.
+*
+*  DATA: LW_TABNAME  TYPE SLIS_TABNAME.
+*  LW_TABNAME = 'I_OUTPUT'.
+*
+*  CLEAR W_FIELDCAT.
+*  W_FIELDCAT-FIELDNAME     = LP_FIELDNAME.
+*  W_FIELDCAT-TABNAME       = LW_TABNAME.
+*  W_FIELDCAT-REPTEXT_DDIC  = LP_TEXT.
+*  W_FIELDCAT-OUTPUTLEN     = LP_LEN.
+*  W_FIELDCAT-CFIELDNAME    = LP_CFIELDNAME.
+*  W_FIELDCAT-CTABNAME      = LP_CTABNAME.
+*  W_FIELDCAT-SELTEXT_M     = LP_SELTEXT_M.
+*  W_FIELDCAT-SELTEXT_S     = LP_SELTEXT_S.
+*  IF LP_FIELDNAME = 'TRANS_NO'.
+*    W_FIELDCAT-NO_ZERO = 'X'.
+*  ENDIF.
+*  APPEND W_FIELDCAT TO I_FIELDCAT.
+*
+*ENDFORM.                    " ADD_FIELDCAT
+**&---------------------------------------------------------------------*
+**&      Form  TOP_OF_PAGE
+**&---------------------------------------------------------------------*
+**       top of page
+**----------------------------------------------------------------------*
+*FORM TOP_OF_PAGE .
+*
+*  DATA: LW_DATE_LOW  TYPE C LENGTH 10,
+*        LW_DATE_HIGH TYPE C LENGTH 10.
+*
+** ALV Header declarations
+*  DATA: LI_HEADER TYPE SLIS_T_LISTHEADER,
+*        LW_HEADER TYPE SLIS_LISTHEADER.
+*
+** Title
+*  CONCATENATE S_DATE-LOW+4(2) '/' S_DATE-LOW+6(2) '/' S_DATE-LOW+0(4) INTO LW_DATE_LOW.
+*  CONCATENATE S_DATE-HIGH+4(2) '/' S_DATE-HIGH+6(2) '/' S_DATE-HIGH+0(4) INTO LW_DATE_HIGH.
+*
+*  LW_HEADER-TYP = 'H'.
+*  IF S_DATE-HIGH IS NOT INITIAL.
+*    CONCATENATE 'Transaction List for Periods'(300) LW_DATE_LOW '-'(301) LW_DATE_HIGH
+*      INTO LW_HEADER-INFO SEPARATED BY SPACE.
+*  ELSE.
+*    CONCATENATE 'Transaction List for Periods'(300) LW_DATE_LOW
+*      INTO LW_HEADER-INFO SEPARATED BY SPACE.
+*  ENDIF.
+*  APPEND LW_HEADER TO LI_HEADER.
+*
+*  CALL FUNCTION 'REUSE_ALV_COMMENTARY_WRITE'
+*    EXPORTING
+*      IT_LIST_COMMENTARY = LI_HEADER.
+*
+*ENDFORM.                    " TOP_OF_PAGE
+
+*&---------------------------------------------------------------------*
+*&      Form  DISPLAY_ALV
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM display_alv .
+  SORT i_output BY bukrs portfolio valuation_area security_id valuation_class gsart.
+  PERFORM init_alv.
+*** Start of AC003+ ***
+  IF p_esend IS NOT INITIAL AND s_bname IS NOT INITIAL.
+    PERFORM send_email.
+  ENDIF.
+*** End of  AC003+ ***
+  w_table->display( ).
+ENDFORM.                    " DISPLAY_ALV
+*&---------------------------------------------------------------------*
+*&      Form  INIT_ALV
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM init_alv .
+  TRY.
+      cl_salv_table=>factory(
+        IMPORTING
+          r_salv_table = w_table
+        CHANGING
+          t_table      = i_output ).
+    CATCH cx_salv_msg.                                  "#EC NO_HANDLER
+  ENDTRY.
+  w_table->set_screen_status(
+    pfstatus      =  'SALV_STANDARD'
+    report        =  sy-repid
+    set_functions = w_table->c_functions_all ).
+  w_columns = w_table->get_columns( ).
+  w_columns->set_optimize( abap_true ).
+  PERFORM set_columns_technical USING w_columns.
+  PERFORM set_alv_layout.
+  PERFORM create_header_simple.
+ENDFORM.                    " INIT_ALV
+*&---------------------------------------------------------------------*
+*&      Form  SET_COLUMNS_TECHNICAL
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->P_W_COLUMNS  text
+*----------------------------------------------------------------------*
+*FORM SET_COLUMNS_TECHNICAL  USING    P_W_COLUMNS.
+FORM set_columns_technical USING pr_columns TYPE REF TO cl_salv_columns.
+
+  DATA: lw_column TYPE REF TO cl_salv_column.
+* company code
+  TRY.
+      lw_column = pr_columns->get_column( 'BUKRS' ).
+      lw_column->set_short_text( 'CoCd'(101) ).
+      lw_column->set_medium_text( 'Company Code'(100) ).
+      lw_column->set_long_text( 'Company Code'(100) ).
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+  ENDTRY.
+* company name
+  TRY.
+      lw_column = pr_columns->get_column( 'BUTXT' ).
+      lw_column->set_short_text( 'CoName'(103) ).
+      lw_column->set_medium_text( 'Company Name'(102) ).
+      lw_column->set_long_text( 'Company Name'(102) ).
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+  ENDTRY.
+* valuation area
+  TRY.
+      lw_column = pr_columns->get_column( 'VALUATION_AREA' ).
+      lw_column->set_short_text( 'VA'(105) ).
+      lw_column->set_medium_text( 'Valuation Area'(104) ).
+      lw_column->set_long_text( 'Valuation Area'(104) ).
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+  ENDTRY.
+* Name of Valuation Area
+  TRY.
+      lw_column = pr_columns->get_column( 'VAL_AREA_NAME' ).
+      lw_column->set_short_text( 'VA Name'(107) ).
+      lw_column->set_medium_text( 'VA Name'(107) ).
+      lw_column->set_long_text( 'Name of Valuation Area'(106) ).
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+  ENDTRY.
+* Valuation class
+  TRY.
+      lw_column = pr_columns->get_column( 'VALUATION_CLASS' ).
+      lw_column->set_short_text( 'ValCl'(110) ).
+      lw_column->set_medium_text( 'Val Class'(111) ).
+      lw_column->set_long_text( 'Valuation Class'(109) ).
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+  ENDTRY.
+* Name of Valuation Class
+  TRY.
+      lw_column = pr_columns->get_column( 'VAL_CLASS_NAME' ).
+      lw_column->set_short_text( 'ValCl Name'(113) ).
+      lw_column->set_medium_text( 'ValCl Name'(113) ).
+      lw_column->set_long_text( 'Name of Valuation Class'(112) ).
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+  ENDTRY.
+* Portfolio
+  TRY.
+      lw_column = pr_columns->get_column( 'PORTFOLIO' ).
+      lw_column->set_short_text( 'Portfolio'(114) ).
+      lw_column->set_medium_text( 'Portfolio'(114) ).
+      lw_column->set_long_text( 'Portfolio'(114) ).
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+  ENDTRY.
+* Portfolio name
+  TRY.
+      lw_column = pr_columns->get_column( 'XPORTB' ).
+      lw_column->set_short_text( 'Port Name'(116) ).
+      lw_column->set_medium_text( 'Portfolio Name'(115) ).
+      lw_column->set_long_text( 'Portfolio Name'(115) ).
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+  ENDTRY.
+* Securities Account
+  TRY.
+      lw_column = pr_columns->get_column( 'SECURITY_ACCOUNT' ).
+      lw_column->set_short_text( 'Sec.Acct'(118) ).
+      lw_column->set_medium_text( 'Securities Account'(117) ).
+      lw_column->set_long_text( 'Securities Account'(117) ).
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+  ENDTRY.
+* Business Partner
+  TRY.
+      lw_column = pr_columns->get_column( 'KONTRH' ).
+      lw_column->set_short_text( 'Partner'(120) ).
+      lw_column->set_medium_text( 'Partner'(120) ).
+      lw_column->set_long_text( 'Business Partner'(119) ).
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+  ENDTRY.
+* Business Partner Name
+  TRY.
+      lw_column = pr_columns->get_column( 'NAME_ORG1' ).
+      lw_column->set_short_text( 'Partner Nm'(122) ).
+      lw_column->set_medium_text( 'Partner Name'(123) ).
+      lw_column->set_long_text( 'Business Partner Name'(121) ).
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+  ENDTRY.
+* Product Type
+  TRY.
+      lw_column = pr_columns->get_column( 'GSART' ).
+      lw_column->set_short_text( 'Prod.Type'(125) ).
+      lw_column->set_medium_text( 'Product Type'(124) ).
+      lw_column->set_long_text( 'Product Type'(124) ).
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+  ENDTRY.
+* Product Type Name
+  TRY.
+      lw_column = pr_columns->get_column( 'LTX' ).
+      lw_column->set_short_text( 'ProdTy Nm'(127) ).
+      lw_column->set_medium_text( 'Product Type Name'(126) ).
+      lw_column->set_long_text( 'Product Type Name'(126) ).
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+  ENDTRY.
+* Sec.Classification
+  TRY.
+      lw_column = pr_columns->get_column( 'ALWPKL' ).
+      lw_column->set_short_text( 'Classfic.'(129) ).
+      lw_column->set_medium_text( 'Sec. Classification'(128) ).
+      lw_column->set_long_text( 'Sec. Classification'(128) ).
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+  ENDTRY.
+* Sec. Classification Name
+  TRY.
+      lw_column = pr_columns->get_column( 'XLANGBEZ' ).
+      lw_column->set_short_text( 'Class. Nm'(132) ).
+      lw_column->set_medium_text( 'Sec. Class Name'(131) ).
+      lw_column->set_long_text( 'Sec. Classification Name'(130) ).
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+  ENDTRY.
+* Security Type
+  TRY.
+      lw_column = pr_columns->get_column( 'SWERTTYP' ).
+      lw_column->set_short_text( 'Sec. Type'(134) ).
+      lw_column->set_medium_text( 'Security Type'(133) ).
+      lw_column->set_long_text( 'Security Type'(133) ).
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+  ENDTRY.
+* Security Type Name
+  TRY.
+      lw_column = pr_columns->get_column( 'SEC_TYPE_NM' ).
+      lw_column->set_short_text( 'Sec.Typ NM'(136) ).
+      lw_column->set_medium_text( 'Security Type Name'(135) ).
+      lw_column->set_long_text( 'Security Type Name'(135) ).
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+  ENDTRY.
+* ID number
+  TRY.
+      lw_column = pr_columns->get_column( 'SECURITY_ID' ).
+      lw_column->set_short_text( 'ID number'(137) ).
+      lw_column->set_medium_text( 'ID number'(137) ).
+      lw_column->set_long_text( 'ID number'(137) ).
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+  ENDTRY.
+* Long name
+  TRY.
+      lw_column = pr_columns->get_column( 'XALLB' ).
+      lw_column->set_short_text( 'Long name'(138) ).
+      lw_column->set_medium_text( 'Long name'(138) ).
+      lw_column->set_long_text( 'Long name'(138) ).
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+  ENDTRY.
+* MAC Type
+  TRY.
+      lw_column = pr_columns->get_column( 'MAC_TYPE' ).
+      lw_column->set_short_text( 'MAC Type'(139) ).
+      lw_column->set_medium_text( 'MAC Type'(139) ).
+      lw_column->set_long_text( 'MAC Type'(139) ).
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+  ENDTRY.
+* NY Sec Type
+  TRY.
+      lw_column = pr_columns->get_column( 'NY_SEC_TYPE' ).
+      lw_column->set_short_text( 'NY Sec'(141) ).
+      lw_column->set_medium_text( 'NY Sec Type'(140) ).
+      lw_column->set_long_text( 'NY Sec Type'(140) ).
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+  ENDTRY.
+*  Lot ID
+  TRY.
+      lw_column = pr_columns->get_column( 'LOT_ID' ).
+      lw_column->set_short_text( 'Lot ID'(142) ).
+      lw_column->set_medium_text( 'Lot ID'(142) ).
+      lw_column->set_long_text( 'Lot ID'(142) ).
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+  ENDTRY.
+*Lot-Generating Transaction No
+  TRY.
+      lw_column = pr_columns->get_column( 'TRANS_NO' ).
+      lw_column->set_short_text( 'Transactn'(144) ).
+      lw_column->set_medium_text( 'Transaction No'(143) ).
+      lw_column->set_long_text( 'Transaction No'(143) ).
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+  ENDTRY.
+*  Position Currency
+  TRY.
+      lw_column = pr_columns->get_column( 'SBWHR' ).
+      lw_column->set_short_text( 'PC'(147) ).
+      lw_column->set_medium_text( 'Position Currency'(146) ).
+      lw_column->set_long_text( 'Position Currency'(146) ).
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+  ENDTRY.
+* Valuation Currency
+  TRY.
+      lw_column = pr_columns->get_column( 'SVWHR' ).
+      lw_column->set_short_text( 'VC'(149) ).
+      lw_column->set_medium_text( 'Valuation Currency'(148) ).
+      lw_column->set_long_text( 'Valuation Currency'(148) ).
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+  ENDTRY.
+*  Trade Date
+  TRY.
+      lw_column = pr_columns->get_column( 'DBESTAND' ).
+      lw_column->set_short_text( 'Trade Date'(150) ).
+      lw_column->set_medium_text( 'Trade Date'(150) ).
+      lw_column->set_long_text( 'Trade Date'(150) ).
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+  ENDTRY.
+* Settlement Date
+  TRY.
+      lw_column = pr_columns->get_column( 'DZTERM' ).
+      lw_column->set_short_text( 'Stl Date'(152) ).
+      lw_column->set_medium_text( 'Settlement Date'(151) ).
+      lw_column->set_long_text( 'Settlement Date'(151) ).
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+  ENDTRY.
+* Maturity Date
+  TRY.
+      lw_column = pr_columns->get_column( 'DELFZ' ).
+      lw_column->set_short_text( 'Mat. Date'(154) ).
+      lw_column->set_medium_text( 'Maturity Date'(153) ).
+      lw_column->set_long_text( 'Maturity Date'(153) ).
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+  ENDTRY.
+* HK Regulatory LoB
+  TRY.
+      lw_column = pr_columns->get_column( 'HK_REG_LOB' ).
+      lw_column->set_short_text( 'HK LoB'(156) ).
+      lw_column->set_medium_text( 'HK Regulatory LoB'(155) ).
+      lw_column->set_long_text( 'HK Regulatory LoB'(155) ).
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+  ENDTRY.
+* HK Regulatory LoB Name
+  TRY.
+      lw_column = pr_columns->get_column( 'HK_REG_LOB_NM' ).
+      lw_column->set_short_text( 'HKLoB Name'(158) ).
+      lw_column->set_medium_text( 'HKLoB Name'(158) ).
+      lw_column->set_long_text( 'HK Regulatory LoB Name'(157) ).
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+  ENDTRY.
+* IFRS
+  TRY.
+      lw_column = pr_columns->get_column( 'IFRS' ).
+      lw_column->set_short_text( 'IFRS'(159) ).
+      lw_column->set_medium_text( 'IFRS'(159) ).
+      lw_column->set_long_text( 'IFRS'(159) ).
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+  ENDTRY.
+* IFRS Name
+  TRY.
+      lw_column = pr_columns->get_column( 'IFRS_NM' ).
+      lw_column->set_short_text( 'IFRS Name'(160) ).
+      lw_column->set_medium_text( 'IFRS Name'(160) ).
+      lw_column->set_long_text( 'IFRS Name'(160) ).
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+  ENDTRY.
+* Local Regulatory LoB
+  TRY.
+      lw_column = pr_columns->get_column( 'LOCAL_REG_LOB' ).
+      lw_column->set_short_text( 'Local LoB'(162) ).
+      lw_column->set_medium_text( 'Local Regulatory LoB'(161) ).
+      lw_column->set_long_text( 'Local Regulatory LoB'(161) ).
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+  ENDTRY.
+* Local Regulatory LoB Name
+  TRY.
+      lw_column = pr_columns->get_column( 'LOCAL_REG_LOB_NM' ).
+      lw_column->set_short_text( 'Local Name'(165) ).
+      lw_column->set_medium_text( 'Local LoB Name'(164) ).
+      lw_column->set_long_text( 'Local Regulatory LoB Name'(163) ).
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+  ENDTRY.
+* GAAP Code
+  TRY.
+      lw_column = pr_columns->get_column( 'GAAP_CD' ).
+      lw_column->set_short_text( 'GAAP'(167) ).
+      lw_column->set_medium_text( 'GAAP Code'(166) ).
+      lw_column->set_long_text( 'GAAP Code'(166) ).
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+  ENDTRY.
+* GAAP Code Name
+  TRY.
+      lw_column = pr_columns->get_column( 'GAAP_CD_NM' ).
+      lw_column->set_short_text( 'GAAP Name'(169) ).
+      lw_column->set_medium_text( 'GAAP Name'(169) ).
+      lw_column->set_long_text( 'GAAP Code Name'(168) ).
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+  ENDTRY.
+* Profit Center
+  TRY.
+      lw_column = pr_columns->get_column( 'PRCTR' ).
+      lw_column->set_short_text( 'Profit Ctr'(171) ).
+      lw_column->set_medium_text( 'Profit Center'(170) ).
+      lw_column->set_long_text( 'Profit Center'(170) ).
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+  ENDTRY.
+* Profit Center Name
+  TRY.
+      lw_column = pr_columns->get_column( 'KTEXT' ).
+      lw_column->set_short_text( 'ProCtr Nm'(174) ).
+      lw_column->set_medium_text( 'Profit Center Name'(172) ).
+      lw_column->set_long_text( 'Profit Center Name'(172) ).
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+  ENDTRY.
+* Assignment
+  TRY.
+      lw_column = pr_columns->get_column( 'ZUOND' ).
+      lw_column->set_short_text( 'Assignment'(175) ).
+      lw_column->set_medium_text( 'Assignment'(175) ).
+      lw_column->set_long_text( 'Assignment'(175) ).
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+  ENDTRY.
+* Posting Status
+  TRY.
+      lw_column = pr_columns->get_column( 'POSTING_STATUS' ).
+      lw_column->set_short_text( 'Status'(177) ).
+      lw_column->set_medium_text( 'Posting Status'(176) ).
+      lw_column->set_long_text( 'Posting Status'(176) ).
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+  ENDTRY.
+* Transaction Type
+  TRY.
+      lw_column = pr_columns->get_column( 'TRANS_TYPE' ).
+      lw_column->set_short_text( 'TType'(179) ).
+      lw_column->set_medium_text( 'Transaction Type'(178) ).
+      lw_column->set_long_text( 'Transaction Type'(178) ).
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+  ENDTRY.
+* Nominal/Units
+  TRY.
+      lw_column = pr_columns->get_column( 'NOM_UNITS' ).
+      lw_column->set_short_text( 'Nom/Units'(181) ).
+      lw_column->set_medium_text( 'Nominal/Units'(180) ).
+      lw_column->set_long_text( 'Nominal/Units'(180) ).
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+  ENDTRY.
+* Coupon Rate
+  TRY.
+      lw_column = pr_columns->get_column( 'PKOND' ).
+      lw_column->set_short_text( 'Coupon'(183) ).
+      lw_column->set_medium_text( 'Coupon Rate'(182) ).
+      lw_column->set_long_text( 'Coupon Rate'(182) ).
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+  ENDTRY.
+* Original Cost in PC
+  TRY.
+      lw_column = pr_columns->get_column( 'ORIG_COST_PC' ).
+      lw_column->set_currency_column( 'SBWHR' ).                        "PY001+
+      lw_column->set_short_text( 'O Cost PC'(185) ).
+      lw_column->set_medium_text( 'Original Cost PC'(186) ).
+      lw_column->set_long_text( 'Original Cost in PC'(184) ).
+      IF p_pos IS INITIAL.
+        lw_column->set_technical( if_salv_c_bool_sap=>true ).
+      ENDIF.
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+    CATCH cx_salv_data_error.           "#EC NO_HANDLER         "PY001+
+  ENDTRY.
+* Original Cost in VC
+  TRY.
+      lw_column = pr_columns->get_column( 'ORIG_COST_VC' ).
+      lw_column->set_currency_column( 'SVWHR' ).                        "PY001+
+      lw_column->set_short_text( 'O Cost VC'(188) ).
+      lw_column->set_medium_text( 'Original Cost VC'(189) ).
+      lw_column->set_long_text( 'Original Cost in VC'(187) ).
+      IF p_val IS INITIAL.
+        lw_column->set_technical( if_salv_c_bool_sap=>true ).
+      ENDIF.
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+    CATCH cx_salv_data_error.           "#EC NO_HANDLER         "PY001+
+  ENDTRY.
+* Original Cost in RC
+  TRY.
+      lw_column = pr_columns->get_column( 'ORIG_COST_RC' ).
+      lw_column->set_short_text( 'O Cost RC'(191) ).
+      lw_column->set_medium_text( 'Original Cost RC'(192) ).
+      lw_column->set_long_text( 'Original Cost in RC'(190) ).
+      IF p_rep IS INITIAL.
+        lw_column->set_technical( if_salv_c_bool_sap=>true ).
+      ENDIF.
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+  ENDTRY.
+* Purchase Cost (Capitalized) in PC
+  TRY.
+      lw_column = pr_columns->get_column( 'PURC_COST_PC' ).
+      lw_column->set_currency_column( 'SBWHR' ).                        "PY001+
+      lw_column->set_short_text( 'P Cost PC'(194) ).
+      lw_column->set_medium_text( 'Purchase Cost PC'(195) ).
+      lw_column->set_long_text( 'Purchase Cost (Capitalized) in PC'(193) ).
+      IF p_pos IS INITIAL.
+        lw_column->set_technical( if_salv_c_bool_sap=>true ).
+      ENDIF.
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+    CATCH cx_salv_data_error.           "#EC NO_HANDLER         "PY001+
+  ENDTRY.
+* Purchase Cost (Capitalized) in VC
+  TRY.
+      lw_column = pr_columns->get_column( 'PURC_COST_VC' ).
+      lw_column->set_currency_column( 'SVWHR' ).                        "PY001+
+      lw_column->set_short_text( 'P Cost VC'(197) ).
+      lw_column->set_medium_text( 'Purchase Cost VC'(198) ).
+      lw_column->set_long_text( 'Purchase Cost (Capitalized) in VC'(196) ).
+      IF p_val IS INITIAL.
+        lw_column->set_technical( if_salv_c_bool_sap=>true ).
+      ENDIF.
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+    CATCH cx_salv_data_error.           "#EC NO_HANDLER         "PY001+
+  ENDTRY.
+* Purchase Cost (Capitalized) in RC
+  TRY.
+      lw_column = pr_columns->get_column( 'PURC_COST_RC' ).
+      lw_column->set_short_text( 'P Cost RC'(200) ).
+      lw_column->set_medium_text( 'Purchase Cost RC'(201) ).
+      lw_column->set_long_text( 'Purchase Cost (Capitalized) in RC'(199) ).
+      IF p_rep IS INITIAL.
+        lw_column->set_technical( if_salv_c_bool_sap=>true ).
+      ENDIF.
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+  ENDTRY.
+* Accrued Interest in PC
+  TRY.
+      lw_column = pr_columns->get_column( 'ACCR_INT_PC' ).
+      lw_column->set_currency_column( 'SBWHR' ).                        "PY001+
+      lw_column->set_short_text( 'AccrInt PC'(204) ).
+      lw_column->set_medium_text( 'Accrued Interest PC'(203) ).
+      lw_column->set_long_text( 'Accrued Interest in PC'(202) ).
+      IF p_pos IS INITIAL.
+        lw_column->set_technical( if_salv_c_bool_sap=>true ).
+      ENDIF.
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+    CATCH cx_salv_data_error.           "#EC NO_HANDLER         "PY001+
+  ENDTRY.
+* Accrued Interest in VC
+  TRY.
+      lw_column = pr_columns->get_column( 'ACCR_INT_VC' ).
+      lw_column->set_currency_column( 'SVWHR' ).                        "PY001+
+      lw_column->set_short_text( 'AccrInt VC'(206) ).
+      lw_column->set_medium_text( 'Accrued Interest VC'(207) ).
+      lw_column->set_long_text( 'Accrued Interest in VC'(205) ).
+      IF p_val IS INITIAL.
+        lw_column->set_technical( if_salv_c_bool_sap=>true ).
+      ENDIF.
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+    CATCH cx_salv_data_error.           "#EC NO_HANDLER         "PY001+
+  ENDTRY.
+* Accrued Interest in RC
+  TRY.
+      lw_column = pr_columns->get_column( 'ACCR_INT_RC' ).
+      lw_column->set_short_text( 'AccrInt RC'(209) ).
+      lw_column->set_medium_text( 'Accrued Interest RC'(210) ).
+      lw_column->set_long_text( 'Accrued Interest in RC'(208) ).
+      IF p_rep IS INITIAL.
+        lw_column->set_technical( if_salv_c_bool_sap=>true ).
+      ENDIF.
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+  ENDTRY.
+* Handling Fee on Purchase in PC
+  TRY.
+      lw_column = pr_columns->get_column( 'FEE_PURC_PC' ).
+      lw_column->set_currency_column( 'SBWHR' ).                        "PY001+
+      lw_column->set_short_text( 'Fee P PC'(213) ).
+      lw_column->set_medium_text( 'Fee on Purchase PC'(212) ).
+      lw_column->set_long_text( 'Handling Fee on Purchase in PC'(211) ).
+      IF p_pos IS INITIAL.
+        lw_column->set_technical( if_salv_c_bool_sap=>true ).
+      ENDIF.
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+    CATCH cx_salv_data_error.           "#EC NO_HANDLER         "PY001+
+  ENDTRY.
+* Handling Fee on Purchase in VC
+  TRY.
+      lw_column = pr_columns->get_column( 'FEE_PURC_VC' ).
+      lw_column->set_currency_column( 'SVWHR' ).                        "PY001+
+      lw_column->set_short_text( 'Fee P VC'(215) ).
+      lw_column->set_medium_text( 'Fee on Purchase VC'(216) ).
+      lw_column->set_long_text( 'Handling Fee on Purchase in VC'(214) ).
+      IF p_val IS INITIAL.
+        lw_column->set_technical( if_salv_c_bool_sap=>true ).
+      ENDIF.
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+    CATCH cx_salv_data_error.           "#EC NO_HANDLER         "PY001+
+  ENDTRY.
+* Handling Fee on Purchase in RC
+  TRY.
+      lw_column = pr_columns->get_column( 'FEE_PURC_RC' ).
+      lw_column->set_short_text( 'Fee P RC'(218) ).
+      lw_column->set_medium_text( 'Fee on Purchase RC'(219) ).
+      lw_column->set_long_text( 'Handling Fee on Purchase in RC'(217) ).
+      IF p_rep IS INITIAL.
+        lw_column->set_technical( if_salv_c_bool_sap=>true ).
+      ENDIF.
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+  ENDTRY.
+* Handling Fee on Sales in PC
+  TRY.
+      lw_column = pr_columns->get_column( 'FEE_SALE_PC' ).
+      lw_column->set_currency_column( 'SBWHR' ).                        "PY001+
+      lw_column->set_short_text( 'Fee S PC'(221) ).
+      lw_column->set_medium_text( 'Fee on Sales PC'(222) ).
+      lw_column->set_long_text( 'Handling Fee on Sales in PC'(220) ).
+      IF p_pos IS INITIAL.
+        lw_column->set_technical( if_salv_c_bool_sap=>true ).
+      ENDIF.
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+    CATCH cx_salv_data_error.           "#EC NO_HANDLER         "PY001+
+  ENDTRY.
+* Handling Fee on Sales in VC
+  TRY.
+      lw_column = pr_columns->get_column( 'FEE_SALE_VC' ).
+      lw_column->set_currency_column( 'SVWHR' ).                        "PY001+
+      lw_column->set_short_text( 'Fee S VC'(224) ).
+      lw_column->set_medium_text( 'Fee on Sales VC'(225) ).
+      lw_column->set_long_text( 'Handling Fee on Sales in VC'(223) ).
+      IF p_val IS INITIAL.
+        lw_column->set_technical( if_salv_c_bool_sap=>true ).
+      ENDIF.
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+    CATCH cx_salv_data_error.           "#EC NO_HANDLER         "PY001+
+  ENDTRY.
+* Handling Fee on Sales in RC
+  TRY.
+      lw_column = pr_columns->get_column( 'FEE_SALE_RC' ).
+      lw_column->set_short_text( 'Fee S RC'(227) ).
+      lw_column->set_medium_text( 'Fee on Sales RC'(228) ).
+      lw_column->set_long_text( 'Handling Fee on Sales in RC'(226) ).
+      IF p_rep IS INITIAL.
+        lw_column->set_technical( if_salv_c_bool_sap=>true ).
+      ENDIF.
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+  ENDTRY.
+* Cost of Sale in PC
+  TRY.
+      lw_column = pr_columns->get_column( 'COST_SALE_PC' ).
+      lw_column->set_currency_column( 'SBWHR' ).                        "PY001+
+      lw_column->set_short_text( 'COS PC'(230) ).
+      lw_column->set_medium_text( 'Cost of Sales in PC'(229) ).
+      lw_column->set_long_text( 'Cost of Sales in PC'(229) ).
+      IF p_pos IS INITIAL.
+        lw_column->set_technical( if_salv_c_bool_sap=>true ).
+      ENDIF.
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+    CATCH cx_salv_data_error.           "#EC NO_HANDLER         "PY001+
+  ENDTRY.
+* Cost of Sale in VC
+  TRY.
+      lw_column = pr_columns->get_column( 'COST_SALE_VC' ).
+      lw_column->set_currency_column( 'SVWHR' ).                        "PY001+
+      lw_column->set_short_text( 'COS VC'(232) ).
+      lw_column->set_medium_text( 'Cost of Sales in VC'(231) ).
+      lw_column->set_long_text( 'Cost of Sales in VC'(231) ).
+      IF p_val IS INITIAL.
+        lw_column->set_technical( if_salv_c_bool_sap=>true ).
+      ENDIF.
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+    CATCH cx_salv_data_error.           "#EC NO_HANDLER         "PY001+
+  ENDTRY.
+* Cost of Sale in RC
+  TRY.
+      lw_column = pr_columns->get_column( 'COST_SALE_RC' ).
+      lw_column->set_short_text( 'COS RC'(234) ).
+      lw_column->set_medium_text( 'Cost of Sales in RC'(233) ).
+      lw_column->set_long_text( 'Cost of Sales in RC'(233) ).
+      IF p_rep IS INITIAL.
+        lw_column->set_technical( if_salv_c_bool_sap=>true ).
+      ENDIF.
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+  ENDTRY.
+* Settlement Amount in PC
+  TRY.
+      lw_column = pr_columns->get_column( 'SETT_AMT_PC' ).
+      lw_column->set_currency_column( 'SBWHR' ).                        "PY001+
+      lw_column->set_short_text( 'Settle PC'(236) ).
+      lw_column->set_medium_text( 'Settlement Amount PC'(237) ).
+      lw_column->set_long_text( 'Settlement Amount in PC'(235) ).
+      IF p_pos IS INITIAL.
+        lw_column->set_technical( if_salv_c_bool_sap=>true ).
+      ENDIF.
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+    CATCH cx_salv_data_error.           "#EC NO_HANDLER         "PY001+
+  ENDTRY.
+* Settlement Amount in VC
+  TRY.
+      lw_column = pr_columns->get_column( 'SETT_AMT_VC' ).
+      lw_column->set_currency_column( 'SVWHR' ).                        "PY001+
+      lw_column->set_short_text( 'Settle VC'(239) ).
+      lw_column->set_medium_text( 'Settlement Amount VC'(240) ).
+      lw_column->set_long_text( 'Settlement Amount in VC'(238) ).
+      IF p_val IS INITIAL.
+        lw_column->set_technical( if_salv_c_bool_sap=>true ).
+      ENDIF.
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+    CATCH cx_salv_data_error.           "#EC NO_HANDLER         "PY001+
+  ENDTRY.
+* Settlement Amount in RC
+  TRY.
+      lw_column = pr_columns->get_column( 'SETT_AMT_RC' ).
+      lw_column->set_short_text( 'Settle RC'(242) ).
+      lw_column->set_medium_text( 'Settlement Amount RC'(243) ).
+      lw_column->set_long_text( 'Settlement Amount in RC'(241) ).
+      IF p_rep IS INITIAL.
+        lw_column->set_technical( if_salv_c_bool_sap=>true ).
+      ENDIF.
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+  ENDTRY.
+* RCG/(L) (Market) in PC
+  TRY.
+      lw_column = pr_columns->get_column( 'RCGL_MKT_PC' ).
+      lw_column->set_currency_column( 'SBWHR' ).                        "PY001+
+      lw_column->set_short_text( 'RCGL M PC'(245) ).
+      lw_column->set_medium_text( 'RCG/(L) (Mkt) PC'(246) ).
+      lw_column->set_long_text( 'RCG/(L) (Market) in PC'(244) ).
+      IF p_pos IS INITIAL.
+        lw_column->set_technical( if_salv_c_bool_sap=>true ).
+      ENDIF.
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+    CATCH cx_salv_data_error.           "#EC NO_HANDLER         "PY001+
+  ENDTRY.
+* RCG/(L) (Market) in VC
+  TRY.
+      lw_column = pr_columns->get_column( 'RCGL_MKT_VC' ).
+      lw_column->set_currency_column( 'SVWHR' ).                        "PY001+
+      lw_column->set_short_text( 'RCGL M VC'(248) ).
+      lw_column->set_medium_text( 'RCG/(L) (Mkt) VC'(249) ).
+      lw_column->set_long_text( 'RCG/(L) (Market) in VC'(247) ).
+      IF p_val IS INITIAL.
+        lw_column->set_technical( if_salv_c_bool_sap=>true ).
+      ENDIF.
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+    CATCH cx_salv_data_error.           "#EC NO_HANDLER         "PY001+
+  ENDTRY.
+* RCG/(L) (Market) in RC
+  TRY.
+      lw_column = pr_columns->get_column( 'RCGL_MKT_RC' ).
+      lw_column->set_short_text( 'RCGL M RC'(251) ).
+      lw_column->set_medium_text( 'RCG/(L) (Mkt) RC'(252) ).
+      lw_column->set_long_text( 'RCG/(L) (Market) in RC'(250) ).
+      IF p_rep IS INITIAL.
+        lw_column->set_technical( if_salv_c_bool_sap=>true ).
+      ENDIF.
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+  ENDTRY.
+* RCG/(L) (FX) in VC
+  TRY.
+      lw_column = pr_columns->get_column( 'RCGL_FX_VC' ).
+      lw_column->set_currency_column( 'SVWHR' ).                        "PY001+
+      lw_column->set_short_text( 'RCGL FX VC'(254) ).
+      lw_column->set_medium_text( 'RCG/(L) (FX) VC'(255) ).
+      lw_column->set_long_text( 'RCG/(L) (FX) in VC'(253) ).
+      IF p_val IS INITIAL.
+        lw_column->set_technical( if_salv_c_bool_sap=>true ).
+      ENDIF.
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+    CATCH cx_salv_data_error.           "#EC NO_HANDLER         "PY001+
+  ENDTRY.
+* RCG/(L) (Market) in RC
+  TRY.
+      lw_column = pr_columns->get_column( 'RCGL_FX_RC' ).
+      lw_column->set_short_text( 'RCGL FX RC'(257) ).
+      lw_column->set_medium_text( 'RCG/(L) (FX) RC'(258) ).
+      lw_column->set_long_text( 'RCG/(L) (FX) in RC'(256) ).
+      IF p_rep IS INITIAL.
+        lw_column->set_technical( if_salv_c_bool_sap=>true ).
+      ENDIF.
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+  ENDTRY.
+* Total RCG/(L) in VC
+  TRY.
+      lw_column = pr_columns->get_column( 'TOT_RCGL_VC' ).
+      lw_column->set_currency_column( 'SVWHR' ).                        "PY001+
+      lw_column->set_short_text( 'Total VC'(260) ).
+      lw_column->set_medium_text( 'Total RCG/(L) VC'(261) ).
+      lw_column->set_long_text( 'Total RCG/(L) in VC'(259) ).
+      IF p_val IS INITIAL.
+        lw_column->set_technical( if_salv_c_bool_sap=>true ).
+      ENDIF.
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+    CATCH cx_salv_data_error.           "#EC NO_HANDLER         "PY001+
+  ENDTRY.
+* Total RCG/(L) in RC
+  TRY.
+      lw_column = pr_columns->get_column( 'TOT_RCGL_RC' ).
+      lw_column->set_short_text( 'Total RC'(263) ).
+      lw_column->set_medium_text( 'Total RCG/(L) RC'(264) ).
+      lw_column->set_long_text( 'Total RCG/(L) in RC'(262) ).
+      IF p_rep IS INITIAL.
+        lw_column->set_technical( if_salv_c_bool_sap=>true ).
+      ENDIF.
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+  ENDTRY.
+
+* PIR9000000725 CN_RCG/L Start
+  TRY.
+      lw_column = pr_columns->get_column( 'CN_RCGL_PC' ).
+      lw_column->set_currency_column( 'SBWHR' ).                        "PY001+
+      lw_column->set_short_text( 'CN_RCG/L'(265) ).
+      lw_column->set_medium_text( 'CN_RCG/L'(265) ).
+      lw_column->set_long_text( 'CN Realized Gain/Loss'(266) ).
+      IF p_pos IS INITIAL.
+        lw_column->set_technical( if_salv_c_bool_sap=>true ).
+      ENDIF.
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+    CATCH cx_salv_data_error.           "#EC NO_HANDLER         "PY001+
+  ENDTRY.
+* PIR9000000725 CN_RCG/L End
+
+  TRY.
+      lw_column = pr_columns->get_column( 'DEAL_NUMBER' ).
+      lw_column->set_technical( if_salv_c_bool_sap=>true ).
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+  ENDTRY.
+  TRY.
+      lw_column = pr_columns->get_column( 'LOTGEN_DEALNR' ).
+      lw_column->set_technical( if_salv_c_bool_sap=>true ).
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+  ENDTRY.
+  TRY.
+      lw_column = pr_columns->get_column( 'SE_DEAL_NUMBER' ).
+      lw_column->set_technical( if_salv_c_bool_sap=>true ).
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+  ENDTRY.
+  TRY.
+      lw_column = pr_columns->get_column( 'TRL_BOOKINGSTATE' ).
+      lw_column->set_technical( if_salv_c_bool_sap=>true ).
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+  ENDTRY.
+  TRY.
+      lw_column = pr_columns->get_column( 'D_UNITS' ).
+      lw_column->set_technical( if_salv_c_bool_sap=>true ).
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+  ENDTRY.
+  TRY.
+      lw_column = pr_columns->get_column( 'D_NOMINAL_AMT_PC' ).
+      lw_column->set_technical( if_salv_c_bool_sap=>true ).
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+  ENDTRY.
+  TRY.
+      lw_column = pr_columns->get_column( 'DBEWEG' ).
+      lw_column->set_technical( if_salv_c_bool_sap=>true ).
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+  ENDTRY.
+  TRY.
+      lw_column = pr_columns->get_column( 'BUSTRANSID' ).
+      lw_column->set_technical( if_salv_c_bool_sap=>true ).
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+  ENDTRY.
+  TRY.
+      lw_column = pr_columns->get_column( 'REFBUSTRANSID' ).
+      lw_column->set_technical( if_salv_c_bool_sap=>true ).
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+  ENDTRY.
+  TRY.
+      lw_column = pr_columns->get_column( 'FLOW_TYPE' ).
+      lw_column->set_technical( if_salv_c_bool_sap=>true ).
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+  ENDTRY.
+  TRY.
+      lw_column = pr_columns->get_column( 'BUSTRANSCAT' ).
+      lw_column->set_technical( if_salv_c_bool_sap=>true ).
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+  ENDTRY.
+  TRY.
+      lw_column = pr_columns->get_column( 'GEN_BUSTRANSCAT' ).
+      lw_column->set_technical( if_salv_c_bool_sap=>true ).
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+  ENDTRY.
+
+  pr_columns->set_optimize( if_salv_c_bool_sap=>true ).
+
+ENDFORM.                    " SET_COLUMNS_TECHNICAL
+*&---------------------------------------------------------------------*
+*&      Form  SET_ALV_LAYOUT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM set_alv_layout .
+  DATA: lw_layout TYPE REF TO cl_salv_layout,
+         lw_key    TYPE salv_s_layout_key.
+
+  lw_layout = w_table->get_layout( ).
+
+*  set the Layout Key
+  lw_key-report = sy-repid.
+  lw_layout->set_key( lw_key ).
+  lw_layout->set_default( abap_true ).
+*  set Layout save restriction
+  lw_layout->set_save_restriction( cl_salv_layout=>restrict_none ).
+ENDFORM.                    " SET_ALV_LAYOUT
+*&---------------------------------------------------------------------*
+*&      Form  CREATE_HEADER_SIMPLE
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM create_header_simple .
+  DATA: lw_date_low  TYPE c LENGTH 10,
+        lw_date_high TYPE c LENGTH 10,
+        lw_text      TYPE c LENGTH 60.
+  WRITE s_date-low TO lw_date_low.
+  WRITE s_date-high TO lw_date_high.
+  IF s_date-high IS NOT INITIAL.
+    CONCATENATE 'Transaction List for Periods'(300) lw_date_low '-'(301) lw_date_high
+      INTO lw_text SEPARATED BY space.
+*** Start of AC003+ ***
+    CONCATENATE 'Transaction List for' lw_date_low '-'(301) lw_date_high
+      INTO w_text SEPARATED BY space.
+*** End of  AC003+ ***
+  ELSE.
+    CONCATENATE 'Transaction List for Periods'(300) lw_date_low
+      INTO lw_text SEPARATED BY space.
+*** Start of AC003+ ***
+    CONCATENATE 'Transaction List for' lw_date_low
+      INTO w_text SEPARATED BY space.
+*** End of  AC003+ ***
+  ENDIF.
+  DATA: lw_top_element TYPE REF TO cl_salv_form_layout_grid.
+  CREATE OBJECT lw_top_element
+    EXPORTING
+      columns = 2.
+  lw_top_element->create_header_information(
+    row = 1
+    column = 1
+    text = lw_text "AC003-
+    ).
+  w_table->set_top_of_list( lw_top_element ).
+ENDFORM.                    " CREATE_HEADER_SIMPLE
+"CR237 end
+
+* PIR9000000725 CN_RCG/L Start
+*&---------------------------------------------------------------------*
+*&      Form  GET_RCGL_CN
+*&---------------------------------------------------------------------*
+*       Fill column of CN RCGL
+*----------------------------------------------------------------------*
+FORM get_rcgl_cn USING lp_dift TYPE t_dift.
+  DATA: lw_flag TYPE c LENGTH 1.
+  DATA: lw_position_oid TYPE tpm_db_os_guid.
+  DATA: lw_dbestand TYPE datum.
+  DATA: li_trlt_flow TYPE TABLE OF t_trlt_flow.
+  DATA: lw_trlt_flow TYPE t_trlt_flow.
+  DATA: lw_trlt_flow_out TYPE t_trlt_flow.
+  DATA: lw_trlt_transaction TYPE t_transaction.
+  DATA: lw_tcat_transaction TYPE t_tcat_transaction.
+  DATA: lw_vwkmko TYPE t_vwkmko.
+  DATA: lw_lines TYPE sy-tabix.
+  DATA: lw_tabix TYPE sy-tabix.
+  CONSTANTS: lc_amount_cat_1011 TYPE tpm_amt_pm_cat VALUE '1011'.
+  CONSTANTS: lc_quant_cat_0002 TYPE tpm_qty_pm_cat VALUE '0002'.
+  lw_position_oid = lp_dift-identified_oid.
+  lw_dbestand = w_cn_trs-dbestand.
+  WHILE lw_flag IS INITIAL.
+    CLEAR li_trlt_flow.
+    PERFORM get_position_flow USING lw_position_oid lw_dbestand CHANGING li_trlt_flow.
+    IF li_trlt_flow IS NOT INITIAL.
+      DESCRIBE TABLE li_trlt_flow LINES lw_lines.
+      SORT li_trlt_flow BY trldate DESCENDING sourcetarget_flg ASCENDING.
+      LOOP AT li_trlt_flow INTO lw_trlt_flow.
+        lw_tabix = sy-tabix.
+* CASE2.1 Find the original purchase transaction
+        IF lw_trlt_flow-amount_cat = lc_amount_cat_1011.
+          lw_flag = 'X'.
+          PERFORM append_cn_trs_purchase USING lw_trlt_flow.
+        ENDIF.
+* CASE2.2 Find the relevant corporate action flow
+        IF lw_trlt_flow-amount_cat <> lc_amount_cat_1011 AND lw_trlt_flow-sourcetarget_flg IS INITIAL.
+          SELECT SINGLE os_guid trldate bustransid refbustransid
+            FROM trlt_transaction
+            INTO lw_trlt_transaction
+            WHERE os_guid = lw_trlt_flow-transaction_oid.
+          IF sy-subrc = 0.
+            SELECT SINGLE canr_definition bustransid
+              FROM tcat_transaction
+              INTO lw_tcat_transaction
+              WHERE bustransid = lw_trlt_transaction-bustransid. "#EC *
+            IF sy-subrc = 0.
+              SELECT SINGLE kmnr herk zaehler nenner
+              FROM vwkmko
+              INTO lw_vwkmko
+              WHERE kmnr = lw_tcat_transaction-canr_definition.
+              IF sy-subrc = 0.
+                PERFORM append_cn_trs_ca USING lw_trlt_flow lw_vwkmko.
+              ENDIF.
+            ENDIF.
+          ENDIF.
+        ENDIF.
+* CASE2.3 Find other relevant flows
+        IF lw_trlt_flow-amount_cat <> lc_amount_cat_1011 AND lw_trlt_flow-sourcetarget_flg IS NOT INITIAL.
+          PERFORM append_cn_trs_re USING lw_trlt_flow.
+          SELECT SINGLE transaction_oid trlflownumber sourcetarget_flg flowtype
+                        amount_factor quant_cat amount_cat units nominal_amt
+                        position_amt position_curr booking_state position_oid trldate
+            FROM trlt_flow
+            INTO lw_trlt_flow_out
+            WHERE transaction_oid = lw_trlt_flow-transaction_oid AND quant_cat = lc_quant_cat_0002. "#EC *
+          IF sy-subrc = 0 AND lw_trlt_flow_out-position_oid IS NOT INITIAL.
+            lw_position_oid = lw_trlt_flow_out-position_oid.
+            lw_dbestand = lw_trlt_flow_out-trldate.
+            PERFORM append_cn_trs_re USING lw_trlt_flow_out.
+          ENDIF.
+        ENDIF.
+        IF lw_tabix = lw_lines.
+          IF lw_flag IS INITIAL AND lw_trlt_flow-sourcetarget_flg IS INITIAL.
+*          MESSAGE 'Error' TYPE 'E'.
+            lw_flag = 'X'.
+          ENDIF.
+        ENDIF.
+      ENDLOOP.
+    ELSE.
+      lw_flag = 'X'.
+    ENDIF.
+  ENDWHILE.
+  CLEAR li_trlt_flow.
+
+ENDFORM.                    " GET_RCGL_CN
+
+*&---------------------------------------------------------------------*
+*&      Form  GET_POSITION_FLOW
+*&---------------------------------------------------------------------*
+*       Get Position Flow
+*----------------------------------------------------------------------*
+FORM get_position_flow
+  USING lp_position_oid TYPE tpm_db_os_guid
+        lp_dbestand TYPE datum
+  CHANGING lp_trlt_flow TYPE t_trlt_flow_tab.
+  CONSTANTS: lc_quant_cat_0001 TYPE tpm_qty_pm_cat VALUE '0001'.
+  SELECT transaction_oid trlflownumber sourcetarget_flg flowtype
+         amount_factor quant_cat amount_cat units nominal_amt
+         position_amt position_curr booking_state position_oid trldate
+    FROM trlt_flow
+    INTO TABLE lp_trlt_flow
+    WHERE position_oid = lp_position_oid
+      AND trldate <= lp_dbestand
+      AND quant_cat = lc_quant_cat_0001.
+  IF sy-subrc = 0.
+    SORT lp_trlt_flow BY transaction_oid.
+  ENDIF.
+ENDFORM.                    " GET_POSITION_FLOW
+*&---------------------------------------------------------------------*
+*&      Form  LOCK_CN_TRS
+*&---------------------------------------------------------------------*
+*       Lock table ztr_cn_trs
+*----------------------------------------------------------------------*
+FORM lock_cn_trs .
+  CALL FUNCTION 'ENQUEUE_EZTR_CN_TRS'
+    EXPORTING
+      mode_ztr_cn_trs = 'S'        "Shared lock
+*     MANDT           = SY-MANDT
+      _scope          = '1'
+      _wait           = 'X'
+*     _COLLECT        = ' '
+    EXCEPTIONS
+      foreign_lock    = 1
+      system_failure  = 2
+      OTHERS          = 3.
+  IF sy-subrc <> 0.
+    MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+            WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+  ENDIF.
+ENDFORM.                    " LOCK_CN_TRS
+*&---------------------------------------------------------------------*
+*&      Form  UNLOCK_CN_TRS
+*&---------------------------------------------------------------------*
+*       Unlock table ztr_cn_trs
+*----------------------------------------------------------------------*
+FORM unlock_cn_trs .
+  CALL FUNCTION 'DEQUEUE_EZTR_CN_TRS'
+    EXPORTING
+      mode_ztr_cn_trs = 'S'
+*     MANDT           = SY-MANDT
+      _scope          = '1'
+*     _SYNCHRON       = ' '
+*     _COLLECT        = ' '
+    .
+  IF sy-subrc <> 0.
+    MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+            WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+  ENDIF.
+ENDFORM.                    " UNLOCK_CN_TRS
+*&---------------------------------------------------------------------*
+*&      Form  DELETE_OBSOLETE
+*&---------------------------------------------------------------------*
+*       Delete the obsolete records for new insertion
+*----------------------------------------------------------------------*
+FORM delete_obsolete .
+  DELETE FROM ztr_cn_trs          "Program will overwrite the same positions
+          WHERE bukrs = w_cn_trs-bukrs
+            AND se_deal_number = w_cn_trs-se_deal_number
+            AND lot_id    = w_cn_trs-lot_id.
+ENDFORM.                    " DELETE_OBSOLETE
+*&---------------------------------------------------------------------*
+*&      Form  APPEND_CN_TRS_SALES
+*&---------------------------------------------------------------------*
+*       Append sales record to bespoke table
+*----------------------------------------------------------------------*
+FORM append_cn_trs_sales USING p_id_oid TYPE tpm_db_os_guid.
+  DATA: lw_ztr_cn_trs TYPE ztr_cn_trs.
+  w_seq_no = 1.
+  lw_ztr_cn_trs-bukrs = w_cn_trs-bukrs.
+  lw_ztr_cn_trs-se_deal_number = w_cn_trs-se_deal_number.
+  lw_ztr_cn_trs-lot_id = w_cn_trs-lot_id.
+  lw_ztr_cn_trs-zs_no = w_seq_no.
+  lw_ztr_cn_trs-dbestand = w_cn_trs-dbestand.
+*  LW_ZTR_CN_TRS-SOURCETARGET_FLG = W_CN_TRS-SOURCETARGET_FLG.
+  lw_ztr_cn_trs-flow_type = w_cn_trs-flow_type.
+  lw_ztr_cn_trs-units = 0 - w_cn_trs-d_units.
+  lw_ztr_cn_trs-nominal_amt = 0 - w_cn_trs-d_nominal_amt_pc.
+  lw_ztr_cn_trs-position_amt = w_cn_trs-d_amount_pc.
+  lw_ztr_cn_trs-amount_cat = w_cn_trs-amount_cat.
+  lw_ztr_cn_trs-quant_cat = w_cn_trs-quant_cat.
+  lw_ztr_cn_trs-identified_oid = p_id_oid.
+*  LW_ZTR_CN_TRS-TRANSACTION_OID = W_CN_TRS-TRANSACTION_OID.
+  lw_ztr_cn_trs-bustransid = w_cn_trs-bustransid.
+  IF w_cn_trs-d_units <> 0 OR w_cn_trs-d_nominal_amt_pc <> 0.
+    lw_ztr_cn_trs-zaverprice = w_cn_trs-d_amount_pc / ( w_cn_trs-d_units + w_cn_trs-d_nominal_amt_pc ).
+    IF lw_ztr_cn_trs-zaverprice < 0.
+      lw_ztr_cn_trs-zaverprice = lw_ztr_cn_trs-zaverprice * ( -1 ).
+    ENDIF.
+  ENDIF.
+  lw_ztr_cn_trs-sbwhr = w_cn_trs-sbwhr.
+  lw_ztr_cn_trs-aedat = sy-datum.
+  APPEND lw_ztr_cn_trs TO i_ztr_cn_trs.
+
+ENDFORM.                    " APPEND_CN_TRS_SALES
+*&---------------------------------------------------------------------*
+*&      Form  APPEND_CN_TRS_PURCHASE
+*&---------------------------------------------------------------------*
+*       Append purchasee record to bespoke table
+*----------------------------------------------------------------------*
+FORM append_cn_trs_purchase  USING  p_trlt_flow TYPE t_trlt_flow.
+  DATA: lw_ztr_cn_trs TYPE ztr_cn_trs.
+  w_seq_no = w_seq_no + 1.
+  lw_ztr_cn_trs-bukrs = w_cn_trs-bukrs.
+  lw_ztr_cn_trs-se_deal_number = w_cn_trs-se_deal_number.
+  lw_ztr_cn_trs-lot_id = w_cn_trs-lot_id.
+  lw_ztr_cn_trs-zs_no = w_seq_no.
+  lw_ztr_cn_trs-dbestand = p_trlt_flow-trldate.
+  lw_ztr_cn_trs-sourcetarget_flg = 'X'.
+  lw_ztr_cn_trs-flow_type = p_trlt_flow-flowtype.
+  lw_ztr_cn_trs-units = p_trlt_flow-units.
+  lw_ztr_cn_trs-nominal_amt = p_trlt_flow-nominal_amt.
+  lw_ztr_cn_trs-position_amt = p_trlt_flow-position_amt.
+  lw_ztr_cn_trs-amount_cat = p_trlt_flow-amount_cat.
+  lw_ztr_cn_trs-quant_cat = p_trlt_flow-quant_cat.
+  lw_ztr_cn_trs-identified_oid = p_trlt_flow-position_oid.
+  lw_ztr_cn_trs-transaction_oid = p_trlt_flow-transaction_oid.
+  lw_ztr_cn_trs-bustransid = w_cn_trs-bustransid.
+  lw_ztr_cn_trs-zaverprice = p_trlt_flow-position_amt / ( p_trlt_flow-units + p_trlt_flow-nominal_amt ).
+  lw_ztr_cn_trs-sbwhr = p_trlt_flow-position_curr.
+  lw_ztr_cn_trs-aedat = sy-datum.
+  APPEND lw_ztr_cn_trs TO i_ztr_cn_trs.
+ENDFORM.                    " APPEND_CN_TRS_PURCHASE
+*&---------------------------------------------------------------------*
+*&      Form  APPEND_CN_TRS_CA
+*&---------------------------------------------------------------------*
+*       Append corporate action to bespoke table
+*----------------------------------------------------------------------*
+FORM append_cn_trs_ca  USING    p_trlt_flow TYPE t_trlt_flow
+                                p_vwkmko TYPE t_vwkmko.
+  DATA: lw_ztr_cn_trs TYPE ztr_cn_trs.
+  CONSTANTS: lc_herk_01 TYPE therk_d VALUE '01'.
+  CONSTANTS: lc_herk_04 TYPE therk_d VALUE '04'.
+  w_seq_no = w_seq_no + 1.
+  lw_ztr_cn_trs-bukrs = w_cn_trs-bukrs.
+  lw_ztr_cn_trs-se_deal_number = w_cn_trs-se_deal_number.
+  lw_ztr_cn_trs-lot_id = w_cn_trs-lot_id.
+  lw_ztr_cn_trs-zs_no = w_seq_no.
+  lw_ztr_cn_trs-dbestand = p_trlt_flow-trldate.
+  lw_ztr_cn_trs-sourcetarget_flg = p_trlt_flow-sourcetarget_flg.
+  lw_ztr_cn_trs-flow_type = p_trlt_flow-flowtype.
+  lw_ztr_cn_trs-units = p_trlt_flow-units.
+  lw_ztr_cn_trs-nominal_amt = p_trlt_flow-nominal_amt.
+  lw_ztr_cn_trs-position_amt = p_trlt_flow-position_amt.
+  lw_ztr_cn_trs-amount_cat = p_trlt_flow-amount_cat.
+  lw_ztr_cn_trs-quant_cat = p_trlt_flow-quant_cat.
+  lw_ztr_cn_trs-identified_oid = p_trlt_flow-position_oid.
+  lw_ztr_cn_trs-transaction_oid = p_trlt_flow-transaction_oid.
+  lw_ztr_cn_trs-bustransid = w_cn_trs-bustransid.
+  IF p_trlt_flow-units <> 0 OR p_trlt_flow-nominal_amt <> 0 .
+    lw_ztr_cn_trs-zaverprice = p_trlt_flow-position_amt / ( p_trlt_flow-units + p_trlt_flow-nominal_amt ).
+  ENDIF.
+  lw_ztr_cn_trs-kmnr = p_vwkmko-kmnr.
+  lw_ztr_cn_trs-herk = p_vwkmko-herk.
+  IF p_vwkmko-herk = lc_herk_01.
+    lw_ztr_cn_trs-zratio = p_vwkmko-zaehler / p_vwkmko-nenner.
+  ELSEIF p_vwkmko-herk = lc_herk_04.
+    lw_ztr_cn_trs-zratio = p_vwkmko-zaehler / ( p_vwkmko-nenner + p_vwkmko-zaehler ).
+  ENDIF.
+  lw_ztr_cn_trs-sbwhr = p_trlt_flow-position_curr.
+  lw_ztr_cn_trs-aedat = sy-datum.
+  APPEND lw_ztr_cn_trs TO i_ztr_cn_trs.
+ENDFORM.                    " APPEND_CN_TRS_CA
+*&---------------------------------------------------------------------*
+*&      Form  APPEND_CN_TRS_RE
+*&---------------------------------------------------------------------*
+*       Append relevant flows to bespoke table
+*----------------------------------------------------------------------*
+FORM append_cn_trs_re  USING    p_trlt_flow TYPE t_trlt_flow.
+  DATA: lw_ztr_cn_trs TYPE ztr_cn_trs.
+  w_seq_no = w_seq_no + 1.
+  lw_ztr_cn_trs-bukrs = w_cn_trs-bukrs.
+  lw_ztr_cn_trs-se_deal_number = w_cn_trs-se_deal_number.
+  lw_ztr_cn_trs-lot_id = w_cn_trs-lot_id.
+  lw_ztr_cn_trs-zs_no = w_seq_no.
+  lw_ztr_cn_trs-dbestand = p_trlt_flow-trldate.
+  lw_ztr_cn_trs-sourcetarget_flg = p_trlt_flow-sourcetarget_flg.
+  lw_ztr_cn_trs-flow_type = p_trlt_flow-flowtype.
+  lw_ztr_cn_trs-units = p_trlt_flow-units.
+  lw_ztr_cn_trs-nominal_amt = p_trlt_flow-nominal_amt.
+  lw_ztr_cn_trs-position_amt = p_trlt_flow-position_amt.
+  lw_ztr_cn_trs-amount_cat = p_trlt_flow-amount_cat.
+  lw_ztr_cn_trs-quant_cat = p_trlt_flow-quant_cat.
+  lw_ztr_cn_trs-identified_oid = p_trlt_flow-position_oid.
+  lw_ztr_cn_trs-transaction_oid = p_trlt_flow-transaction_oid.
+  lw_ztr_cn_trs-bustransid = w_cn_trs-bustransid.
+  IF p_trlt_flow-units <> 0 OR p_trlt_flow-nominal_amt <> 0 .
+    lw_ztr_cn_trs-zaverprice = p_trlt_flow-position_amt / ( p_trlt_flow-units + p_trlt_flow-nominal_amt ).
+  ENDIF.
+  lw_ztr_cn_trs-sbwhr = p_trlt_flow-position_curr.
+  lw_ztr_cn_trs-aedat = sy-datum.
+  APPEND lw_ztr_cn_trs TO i_ztr_cn_trs.
+ENDFORM.                    " APPEND_CN_TRS_RE
+*&---------------------------------------------------------------------*
+*&      Form  SET_RCGL_CN
+*&---------------------------------------------------------------------*
+*       Set CN RCG/L
+*----------------------------------------------------------------------*
+FORM set_rcgl_cn CHANGING p_output TYPE t_report.
+  DATA: lw_ztr_cn_trs TYPE ztr_cn_trs.
+  DATA: lw_sale_amt TYPE tpm_amount.
+  DATA: lw_purchase_amt TYPE tpm_amount.
+  DATA: lw_units TYPE tpm_units.
+  DATA: lw_nominal TYPE tpm_nominal_amt.
+  DATA: lw_ratio TYPE zz_ratio.
+  lw_ratio = 1.
+  LOOP AT i_ztr_cn_trs INTO lw_ztr_cn_trs
+    WHERE se_deal_number = p_output-trans_no
+      AND lot_id = p_output-lot_id.
+    IF lw_ztr_cn_trs-sourcetarget_flg = 'X'.
+      lw_purchase_amt = lw_ztr_cn_trs-zaverprice.
+    ENDIF.
+    IF lw_ztr_cn_trs-zratio <> 0.
+      lw_ratio = lw_ratio * lw_ztr_cn_trs-zratio.
+    ENDIF.
+    IF lw_ztr_cn_trs-zs_no = 1.
+      lw_sale_amt = lw_ztr_cn_trs-zaverprice.
+      lw_units = lw_ztr_cn_trs-units.
+      lw_nominal = lw_ztr_cn_trs-nominal_amt.
+    ENDIF.
+  ENDLOOP.
+  p_output-cn_rcgl_pc = ( lw_sale_amt - lw_purchase_amt * lw_ratio ) * ( lw_units + lw_nominal ).
+ENDFORM.                    " SET_RCGL_CN
+
+*&---------------------------------------------------------------------*
+*&      Form  PROCESS_RCGL_CN
+*&---------------------------------------------------------------------*
+*       Process RCGL CN
+*----------------------------------------------------------------------*
+FORM process_rcgl_cn .
+  DATA lw_dift TYPE t_dift.
+  "get position OID
+  SELECT os_guid identified_oid valuation_area valuation_class company_code
+         product_type security_account security_id portfolio lot_id
+    INTO TABLE i_dift
+    FROM dift_pos_ident
+    WHERE valuation_area IN s_va
+      AND valuation_class IN s_vc
+      AND company_code IN s_bukr
+      AND product_type IN s_gsartp
+      AND security_account IN s_rldep
+      AND security_id IN s_ranlp
+      AND portfolio IN s_port.
+  IF sy-subrc = 0.
+    SORT i_dift BY valuation_area valuation_class company_code product_type
+    security_account security_id portfolio lot_id ASCENDING.
+  ENDIF.
+
+* Selete the relevant flows to retrieve CN RCG/L
+  IF i_dift IS NOT INITIAL.
+    PERFORM lock_cn_trs.            "Lock table ztr_cn_trs
+    LOOP AT i_cn_trs INTO w_cn_trs.
+      READ TABLE i_dift INTO lw_dift
+        WITH KEY valuation_area   = w_cn_trs-valuation_area
+                 valuation_class  = w_cn_trs-valuation_class
+                 company_code     = w_cn_trs-bukrs
+                 product_type     = w_cn_trs-gsart
+                 security_account = w_cn_trs-security_account
+                 security_id      = w_cn_trs-security_id
+                 portfolio        = w_cn_trs-portfolio
+                 lot_id           = w_cn_trs-lot_id BINARY SEARCH.
+      IF sy-subrc = 0 AND lw_dift-identified_oid IS NOT INITIAL.
+        PERFORM delete_obsolete.
+        w_seq_no = 1.
+        PERFORM append_cn_trs_sales USING lw_dift-identified_oid.
+        PERFORM get_rcgl_cn USING lw_dift.   "Retrieve CN RCG/L starting with Position OID
+      ENDIF.
+    ENDLOOP.
+    MODIFY ztr_cn_trs FROM TABLE i_ztr_cn_trs.
+    IF sy-subrc <> 0.
+      MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+              WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+    ENDIF.
+    PERFORM unlock_cn_trs.          "Unlock table ztr_cn_trs
+  ENDIF.
+  CLEAR i_dift.
+ENDFORM.                    " PROCESS_RCGL_CN
+* PIR9000000725 CN_RCG/L End
+
+*** Start of AC002+ ***
+*&---------------------------------------------------------------------*
+*&      Form  GET_EFF_INT_RATE
+*&---------------------------------------------------------------------*
+*       Get Effective Interest Rate
+*----------------------------------------------------------------------*
+FORM get_eff_int_rate.
+
+  SELECT bukrs rfha peffzins FROM vtbfhazu
+    INTO TABLE i_peffzins
+    WHERE bukrs IN s_bukr
+      AND rfha  IN s_rfhap
+      AND saktiv EQ SPACE.
+  IF sy-subrc IS INITIAL.
+    SORT i_peffzins.
+  ENDIF.
+ENDFORM.                    " GET_EFF_INT_RATE
+
+*&---------------------------------------------------------------------*
+*&      Form  GET_TRANS_TEXT
+*&---------------------------------------------------------------------*
+*       Get Transaction Type
+*----------------------------------------------------------------------*
+FORM get_trans_text.
+
+  SELECT sgsart sfhaart xtext FROM at10t
+    INTO TABLE i_at10t
+    WHERE sfhaart IN ('109', '209')
+      AND spras EQ 'E'.
+  IF sy-subrc IS INITIAL.
+    SORT i_at10t.
+  ENDIF.
+ENDFORM.                    " GET_TRANS_TEXT
+*** End of  AC002+ ***
+
+*** Start of AC003+ ***
+*&---------------------------------------------------------------------*
+*&      Form  SEND_EMAIL
+*&---------------------------------------------------------------------*
+*       Send Email
+*----------------------------------------------------------------------*
+FORM send_email.
+  PERFORM create_excel.
+  PERFORM send.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  CREATE_EXCEL
+*&---------------------------------------------------------------------*
+*       Create Excel
+*----------------------------------------------------------------------*
+FORM create_excel.
+  DATA: li_fcat TYPE lvc_t_fcat,
+        lw_fcat LIKE LINE OF li_fcat,
+        lv_row TYPE i,
+        lv_column TYPE i,
+        lw_output LIKE LINE OF i_output,
+        lv_string TYPE text128.
+
+  FIELD-SYMBOLS: <fs_field>.
+  DATA: lw_columns    TYPE REF TO cl_salv_columns_table.
+  DATA: lw_aggr       TYPE REF TO cl_salv_aggregations. "AC003+
+      lw_columns  = w_table->get_columns( ).
+      lw_aggr     = w_table->get_aggregations( ).
+      li_fcat     =  cl_salv_controller_metadata=>get_lvc_fieldcatalog(
+                                    r_columns      = lw_columns
+                                    r_aggregations = lw_aggr ).
+
+      ADD 1 to lv_row.
+      LOOP AT li_fcat INTO lw_fcat WHERE tech EQ SPACE.
+        ADD 1 to lv_column.
+        insert_cell 1 lv_row lv_column lw_fcat-scrtext_l SPACE SPACE SPACE '1111' SPACE.
+      ENDLOOP.
+
+      CLEAR lv_column.
+      LOOP AT i_output INTO lw_output.
+
+        ADD 1 to lv_row.
+
+        LOOP AT li_fcat INTO lw_fcat WHERE tech EQ SPACE.
+            ADD 1 to lv_column.
+
+            ASSIGN COMPONENT lw_fcat-fieldname OF STRUCTURE lw_output TO <fs_field>.
+            IF <fs_field> IS ASSIGNED.
+              CLEAR lv_string.
+              lv_string = <fs_field>.
+              IF lw_fcat-fieldname EQ 'LOT_ID'.
+                CONCATENATE ''' ' lv_string INTO lv_string.
+              ENDIF.
+              insert_cell 1 lv_row lv_column lv_string SPACE SPACE SPACE '1111' SPACE.
+            ENDIF.
+        ENDLOOP.
+        CLEAR lv_column.
+      ENDLOOP.
+*     Create EXCEL XML
+      REFRESH w_xml_table.
+      CLEAR w_xml_size.
+      CALL FUNCTION 'ZBC_CREATE_EXCEL'
+        EXPORTING
+          i_excel_data       = i_excel
+        IMPORTING
+          e_doc_type         = w_doc_type
+          e_xml_table        = w_xml_table
+          e_xml_size         = w_xml_size
+        EXCEPTIONS
+          posizione_mancante = 1
+          posizione_ripetuta = 2
+          OTHERS             = 3.
+
+      IF sy-subrc <> 0.
+        MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+                WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+      ENDIF.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  SEND
+*&---------------------------------------------------------------------*
+*       Send
+*----------------------------------------------------------------------*
+FORM send.
+  DATA: li_attachment TYPE STANDARD TABLE OF rmps_post_content,
+        lw_attachment LIKE LINE OF li_attachment.
+  DATA: li_recipients TYPE ztt_recipients,
+        lw_recipients TYPE zbc_recipients,
+        lw_subject TYPE string,
+        lw_return TYPE bapiret2,
+        li_body TYPE bcsy_text,
+        lw_body TYPE soli,
+        lv_message TYPE string.
+
+  MOVE w_text TO lw_subject.
+
+  REFRESH li_attachment.
+  CLEAR: lw_attachment, li_attachment.
+
+  CONCATENATE 'Transaction_' sy-datum INTO lw_attachment-subject.
+  MOVE 'XLS'       TO lw_attachment-doc_type. "w_doc_type
+  MOVE 'X'         TO lw_attachment-binary.
+  MOVE w_xml_table TO lw_attachment-cont_hex.
+  MOVE w_xml_size  TO lw_attachment-docsize.
+  APPEND lw_attachment TO li_attachment.
+
+  REFRESH li_recipients.
+  CLEAR lw_recipients.
+
+  LOOP AT s_bname.
+    MOVE s_bname-low TO lw_recipients-email.
+    APPEND lw_recipients TO li_recipients.
+  ENDLOOP.
+
+  CONCATENATE 'Please find attached' w_text INTO lv_message SEPARATED BY SPACE.
+* Send EMAIL
+  CALL FUNCTION 'ZBC_SEND_EMAIL'
+    EXPORTING
+      subject     = lw_subject
+      message     = lv_message
+      mailbody    = li_body
+      attachments = li_attachment[]
+      recipients  = li_recipients
+    IMPORTING
+      return      = lw_return
+    EXCEPTIONS
+      no_body     = 1
+      bcs_error   = 2
+      OTHERS      = 3.
+
+  IF sy-subrc <> 0.
+    MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+            WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+  ELSE.
+    MESSAGE s024(ZAIA) WITH 'Document Sent'.
+  ENDIF.
+ENDFORM.
+*** End of  AC003+ ***
