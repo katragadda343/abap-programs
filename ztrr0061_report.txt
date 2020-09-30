@@ -1,0 +1,1616 @@
+*&---------------------------------------------------------------------*
+* Program          : ZTRI0061
+* Created by       : Chua Yuan Wei (KSAP064)
+* Date             : 24 Nov 2017
+* Business Analyst : Dondapati, Koteswararao <Koteswararao.Dondapati@aia.com>
+* Project	         : Project TH Pensions and ILP
+* PIR/PCR          : 9000003265
+* Description      : FAM Output for Local Program
+*&---------------------------------------------------------------------*
+*                         MODIFICATION HISTORY
+*&---------------------------------------------------------------------*
+* Changed by       :
+* Search on        :
+* Date             :
+* Business Analyst :
+* Project	         :
+* PIR/PCR          :
+* Description      :
+*&---------------------------------------------------------------------*
+REPORT ZTRI0061.
+
+NODES: positions.
+
+DATA: zzamor_amaqu_val_pc TYPE tpm_amount.
+
+TYPES: BEGIN OF t_bv,
+        portfolio TYPE tpm_portfolio_diff,
+        transaction_type TYPE c LENGTH 25,
+        security_id TYPE vvranlw,
+        txt_security_id TYPE vwpanla-xallb,
+        pkond TYPE tv_pkond,
+        trade_date TYPE c LENGTH 10,
+        quan1 TYPE fti_nominal_amt_pc,
+        quan2 TYPE fti_nominal_amt_pc,
+        par TYPE c LENGTH 25,
+        purch_pc TYPE fti_purch_pc,
+        nominal_amt_pc TYPE fti_nominal_amt_pc,
+        purch_cost TYPE fti_purch_pc,
+        zamor_amaqu_val_pc LIKE zzamor_amaqu_val_pc,
+        market_price TYPE fti_kurspr,
+        market_pc TYPE fti_market_pc,
+        s_val_ti_pc TYPE fti_s_val_ti_pc,
+        ytm TYPE c LENGTH 25,
+        acc_interest_pc TYPE fti_acc_interest_pc,
+        txt_security_id2 TYPE vwpanla-xallb,
+        dblfz TYPE c LENGTH 10,
+        delfz TYPE c LENGTH 10,
+        aimicmname TYPE zzaimicmname,
+        bpext TYPE bu_bpext,
+        zuond TYPE tb_zuond,
+        key_date TYPE c LENGTH 10,
+        local_ticker TYPE vvranlwxs,
+        mv_ai TYPE tpm_amount,
+        gsart TYPE vvsart,
+        bpext2 TYPE bu_bpext.
+TYPES: END OF t_bv.
+
+TYPES: BEGIN OF t_hld,
+        portfolio TYPE tpm_portfolio_diff,
+        dummy TYPE c LENGTH 25,
+        transaction_type TYPE c LENGTH 25,
+        security_id TYPE vvranlw,
+        txt_security_id TYPE vwpanla-xallb,
+        aimicmname TYPE zzaimicmname,
+        nominal_amt_pc TYPE fti_nominal_amt_pc,
+        dblfz TYPE c LENGTH 10,
+        key_date TYPE c LENGTH 10,
+        delfz TYPE c LENGTH 10,
+        pkond TYPE tv_pkond,
+        ytm TYPE c LENGTH 25,
+        mv_ai TYPE tpm_amount,
+        quan1 TYPE fti_nominal_amt_pc,
+        purch_pc TYPE fti_purch_pc,
+        market_pc TYPE fti_market_pc,
+        mac_type TYPE zzmac_type,
+        bpext TYPE bu_bpext,
+        key_date2 TYPE c LENGTH 10,
+        bpext2 TYPE bu_bpext,
+        local_ticker TYPE vvranlwxs,
+        purch_cost TYPE fti_purch_pc,
+        ind_sector TYPE bu_ind_sector,
+        txt_ind_sector TYPE bu_text20,
+        gsart TYPE vvsart.
+TYPES: END OF t_hld.
+
+TYPES: BEGIN OF t_hldpm,
+        portfolio TYPE tpm_portfolio_diff,
+        txt_gsart TYPE tzpat-ltx,
+        txt_ind_sector TYPE bu_text20,
+        local_ticker TYPE vvranlwxs,
+        issuer_ext_no TYPE bu_bpext,
+        guarantor_id TYPE bu_bpext,
+        issuer_rating TYPE bp_grade,
+        dummy TYPE c,
+        issue_date TYPE c LENGTH 10,
+        maturity_date TYPE c LENGTH 10,
+        coupon_rate TYPE pkond,
+        ytm TYPE c,
+        nominal_units TYPE tpm_amount,
+        book_value TYPE tpm_amount,
+        market_yield TYPE c,
+        mv_ai TYPE tpm_amount,
+        accrued_int TYPE tpm_amount,
+        urgl TYPE tpm_amount,
+        issuer_rating2 TYPE bp_grade,
+        guarantor_rating TYPE bp_grade,
+        sec_orr_rating TYPE bp_grade,
+        issuer_orr_rating TYPE bp_grade,
+        guarantor_orr_rating TYPE c.
+TYPES: END OF t_hldpm.
+
+TYPES: BEGIN OF t_positions.
+  INCLUDE STRUCTURE FTI_LDB_TR_POSITIONS.
+TYPES: END OF t_positions.
+
+TYPES: BEGIN OF t_bp,
+        partner      TYPE bu_partner,
+        name_org1    TYPE bu_nameor1,
+        grp     TYPE bp_grp,
+        date_to      TYPE fsbp_rating_date_end,
+        grade_method TYPE bp_grade_method,
+        date_from    TYPE fsbp_rating_date_start,
+        grade        TYPE bp_grade,
+        date_when    TYPE fsbp_rating_date_entered,
+      END OF t_bp.
+
+*&---------------------------------------------------------------------*
+*  VARIABLES                                                           *
+*&---------------------------------------------------------------------*
+DATA: i_positions   TYPE STANDARD TABLE OF t_positions,
+      w_positions   TYPE t_positions,
+      i_bv          TYPE STANDARD TABLE OF t_bv,
+      w_bv          TYPE t_bv,
+      i_hld         TYPE STANDARD TABLE OF t_hld,
+      w_hld         TYPE t_hld,
+      i_bp          TYPE STANDARD TABLE OF t_bp,
+      w_bp          TYPE t_bp,
+      i_hldpm       TYPE STANDARD TABLE OF t_hldpm,
+      w_hldpm       TYPE t_hldpm,
+      i_alv_variant TYPE disvariant.
+
+*&---------------------------------------------------------------------*
+*  ALV                                                                 *
+*&---------------------------------------------------------------------*
+DATA: o_table               TYPE REF TO cl_salv_table,
+      o_column              TYPE REF TO cl_salv_column_table,
+      o_columns_tab         TYPE REF TO cl_salv_columns_table,
+      o_layout              TYPE REF TO cl_salv_layout,
+      o_functions           TYPE REF TO cl_salv_functions_list,
+      o_display             TYPE REF TO cl_salv_display_settings.
+
+*&---------------------------------------------------------------------*
+*  SELECTION-SCREEN                                                    *
+*&---------------------------------------------------------------------*
+ SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE text-b01.
+ SELECTION-SCREEN BEGIN OF LINE.
+ PARAMETER: p_sec1  TYPE fti_ldb_tr_parameters-flg_se
+                    USER-COMMAND sec
+                    MODIF ID flg.
+ SELECTION-SCREEN COMMENT 3(30) text-s01 FOR FIELD p_sec1.
+
+ PARAMETER: p_dea1 TYPE fti_ldb_tr_parameters-flg_otc
+                    USER-COMMAND otc
+                    MODIF ID flg.
+ SELECTION-SCREEN COMMENT 40(50) text-s04 FOR FIELD p_dea1.
+ SELECTION-SCREEN END   OF LINE.
+
+ SELECTION-SCREEN BEGIN OF LINE.
+ PARAMETER: p_loa1 TYPE fti_ldb_tr_parameters-flg_lo
+                    USER-COMMAND loa
+                    MODIF ID flg.
+ SELECTION-SCREEN COMMENT 3(30) text-s05 FOR FIELD p_loa1.
+
+ PARAMETER: p_pos1 TYPE fti_ldb_tr_parameters-flg_lof
+                    USER-COMMAND pos
+                    MODIF ID flg.
+ SELECTION-SCREEN COMMENT 40(50) text-s06 FOR FIELD p_pos1.
+ SELECTION-SCREEN END   OF LINE.
+ SELECTION-SCREEN END  OF BLOCK b1.
+
+SELECTION-SCREEN BEGIN OF BLOCK b1a WITH FRAME TITLE text-b10.
+PARAMETERS: p_bv  RADIOBUTTON GROUP rad1 DEFAULT 'X' USER-COMMAND ucomm,
+            p_hld RADIOBUTTON GROUP rad1,
+            p_hldpm RADIOBUTTON GROUP rad1.
+SELECTION-SCREEN END  OF BLOCK b1a.
+
+SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME TITLE text-b02.
+ SELECT-OPTIONS:  s_buk FOR positions-bukrs MEMORY ID buk,
+                  s_vla FOR positions-valuation_area
+                        DEFAULT '001'
+                        OBLIGATORY,
+                  s_val FOR positions-valuation_class NO-DISPLAY,
+                  s_rpo FOR positions-portfolio," NO INTERVALS NO-EXTENSION OBLIGATORY,
+                  s_san FOR positions-sanlf NO-DISPLAY,
+                  s_gsa FOR positions-gsart NO-DISPLAY,
+                  s_par FOR positions-partnr NO-DISPLAY,
+                  s_pos FOR positions-sbwhr NO-DISPLAY.
+ SELECT-OPTIONS: s_dat  FOR positions-stichtag
+                        NO INTERVALS
+                        NO-EXTENSION
+                        OBLIGATORY.
+ PARAMETERS: p_ext    TYPE c NO-DISPLAY.
+ PARAMETERS: p_rst     LIKE fti_ldb_tr_parameters-rstich_pb
+                       DEFAULT '1'
+                       NO-DISPLAY.
+ PARAMETERS: p_exp    TYPE fti_ldb_tr_parameters-flg_excl_plan
+                      NO-DISPLAY.
+
+ PARAMETERS: p_kdi    TYPE TPM_KEY_DATE_ULT
+                      NO-DISPLAY.
+ SELECTION-SCREEN SKIP.
+  SELECTION-SCREEN BEGIN OF BLOCK b3 WITH FRAME TITLE text-b03.
+  SELECT-OPTIONS:  s_ran FOR positions-security_id MODIF ID sec,
+                   s_rld FOR positions-security_account MODIF ID sec NO INTERVALS NO-EXTENSION,
+                   s_act FOR positions-secacc_type MODIF ID sec NO-DISPLAY,
+                   s_acg FOR positions-account_group MODIF ID sec NO-DISPLAY.
+  PARAMETERS: p_sac LIKE fti_ldb_tr_parameters-flg_coupling_secaccgrp MODIF ID sec NO-DISPLAY.
+  SELECTION-SCREEN END  OF BLOCK b3.
+
+  SELECTION-SCREEN BEGIN OF BLOCK b4 WITH FRAME TITLE text-b04.
+    SELECT-OPTIONS:  s_lvd FOR positions-loans_contract MODIF ID loa.
+  SELECTION-SCREEN END   OF BLOCK b4.
+
+  SELECTION-SCREEN BEGIN OF BLOCK b5 WITH FRAME TITLE text-b05.
+    SELECT-OPTIONS:  s_rfh   FOR positions-deal_number MODIF ID otc,
+                     s_por   FOR positions-portfolio_tm MODIF ID otc NO-DISPLAY,
+                     s_sfh   FOR positions-sfhaart MODIF ID otc NO-DISPLAY,
+                     s_rma   FOR positions-rmaid MODIF ID otc   NO-DISPLAY,
+                     s_zuo   FOR positions-zuond MODIF ID otc   NO-DISPLAY,
+                     s_ref   FOR positions-refer MODIF ID otc   NO-DISPLAY,
+                     s_mer   FOR positions-merkm MODIF ID otc   NO-DISPLAY,
+                     s_fin   FOR positions-finproj MODIF ID otc NO-DISPLAY.
+    PARAMETERS: p_lcy TYPE fti_ldb_tr_parameters-flg_lead_fol_ccy_logic MODIF ID otc NO-DISPLAY.
+  SELECTION-SCREEN END   OF BLOCK b5.
+
+  SELECTION-SCREEN BEGIN OF BLOCK b6 WITH FRAME TITLE text-b06.
+    SELECT-OPTIONS:  s_lof FOR positions-security_id MODIF ID pos,
+                     s_pac FOR positions-position_account MODIF ID pos,
+                     s_lot FOR positions-lotgen_dealnr MODIF ID pos,
+                     s_lng FOR positions-flag_long_short MODIF ID pos.
+  SELECTION-SCREEN END   OF BLOCK b6.
+SELECTION-SCREEN END  OF BLOCK b2.
+SELECTION-SCREEN BEGIN OF BLOCK b7 WITH FRAME TITLE text-b07.
+ SELECT-OPTIONS:  s_cty   FOR positions-commodity_id          NO-DISPLAY.
+ PARAMETERS:  p_cty TYPE fti_ldb_tr_parameters-commodity_type NO-DISPLAY.
+SELECTION-SCREEN END  OF BLOCK b7.
+
+SELECTION-SCREEN BEGIN OF BLOCK b8 WITH FRAME TITLE text-b08.
+ PARAMETERS: p_rev NO-DISPLAY,
+             p_his NO-DISPLAY,
+             p_err NO-DISPLAY,
+             p_log NO-DISPLAY,
+             p_cde NO-DISPLAY,
+             p_non NO-DISPLAY.
+
+ SELECTION-SCREEN END  OF BLOCK b8.
+
+SELECTION-SCREEN BEGIN OF BLOCK b9 WITH FRAME TITLE text-b11.
+PARAMETERS: p_down   TYPE rlgrap-filename DEFAULT 'C:\' OBLIGATORY.
+SELECTION-SCREEN END   OF BLOCK b9.
+
+ SELECTION-SCREEN BEGIN OF BLOCK b10 WITH FRAME TITLE text-b09.
+PARAMETERS p_var TYPE slis_vari.
+SELECTION-SCREEN END OF BLOCK b10.
+
+*&---------------------------------------------------------------------*
+*  AT SELECTION-SCREEN ON VALUE-REQUEST FOR                            *
+*&---------------------------------------------------------------------*
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_var.
+  DATA: lv_exit TYPE c.
+  CALL FUNCTION 'REUSE_ALV_VARIANT_F4'
+       EXPORTING
+            IS_VARIANT = i_alv_variant
+            I_SAVE     = 'A'
+       IMPORTING
+            E_EXIT     = lv_exit
+            ES_VARIANT = i_alv_variant
+       EXCEPTIONS
+            NOT_FOUND  = 1.
+  IF sy-subrc = 1.
+    PERFORM clear_alv_variant.
+    MESSAGE ID SY-MSGID TYPE 'S' NUMBER SY-MSGNO
+            WITH SY-MSGV1 SY-MSGV2 SY-MSGV3 SY-MSGV4.
+  ENDIF.
+  IF lv_exit <> SPACE.
+    PERFORM clear_alv_variant.
+  ELSE.
+    p_var = i_alv_variant-variant.
+  ENDIF.
+
+AT SELECTION-SCREEN ON p_var.
+  IF p_var IS INITIAL.
+    PERFORM clear_alv_variant.
+  ELSE.
+    i_alv_variant-variant = p_var.
+    CALL FUNCTION 'REUSE_ALV_VARIANT_EXISTENCE'
+      EXPORTING
+        I_SAVE     = 'A'
+      CHANGING
+        CS_VARIANT = i_alv_variant
+      exceptions
+        WRONG_INPUT   = 1
+        NOT_FOUND     = 2
+        PROGRAM_ERROR = 3.
+    IF sy-subrc <> 0.
+      PERFORM clear_alv_variant.
+    ENDIF.
+  ENDIF.
+
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_down.
+  PERFORM get_download_dir USING p_down.
+*&---------------------------------------------------------------------*
+*  AT SELECTION-SCREEN OUTPUT                                          *
+*&---------------------------------------------------------------------*
+AT SELECTION-SCREEN OUTPUT.
+  PERFORM modify_sel_screen.
+
+*&---------------------------------------------------------------------*
+*  AT SELECTION-SCREEN                                                 *
+*&---------------------------------------------------------------------*
+AT SELECTION-SCREEN.
+  IF p_sec1 IS INITIAL AND
+     p_dea1 IS INITIAL AND
+     p_loa1 IS INITIAL AND
+     p_pos1 IS INITIAL.
+    MESSAGE e003(fti_ldb_message).
+  ENDIF.
+
+  PERFORM ldb_params.
+
+*&---------------------------------------------------------------------*
+*  INITIALIZATION                                                      *
+*&---------------------------------------------------------------------*
+INITIALIZATION.
+  PERFORM clear_alv_variant.
+  PERFORM set_init.
+
+
+*&---------------------------------------------------------------------*
+*  START-OF-SELECTION                                                  *
+*&---------------------------------------------------------------------*
+START-OF-SELECTION.
+REFRESH i_positions.
+GET positions FIELDS
+              bukrs                 "Company Code
+              valuation_area        "Valuation Area
+              valuation_class
+              gsart                 "Product Type
+              portfolio             "Portfolio
+              security_id           "Security ID
+              security_account      "Security Account
+              deal_number           "Transaction
+              stichtag              "Key Date
+              portfolio_tm          "Portfolio
+              sbwhr                 "Position Currency
+              book_val_pc           "Book Value in Position Currency
+              pkond
+              purch_pc
+              nominal_amt_pc
+              units
+              s_amort_vc
+              market_pc
+              s_val_ti_pc
+              val_ti_pc
+              acc_interest_pc
+              dblfz
+              delfz
+              zuond
+              ind_sector
+              snoti
+              seffmeth
+              partnr.
+
+   MOVE-CORRESPONDING positions TO w_positions.             "#EC ENHOK
+   APPEND w_positions TO i_positions.
+   SORT i_positions BY gsart.
+
+
+*&---------------------------------------------------------------------*
+*  END-OF-SELECTION                                                    *
+*&---------------------------------------------------------------------*
+END-OF-SELECTION.
+
+  PERFORM get_bp_master_data.
+  IF p_bv EQ 'X'.
+    PERFORM consolidate_bv.
+  ELSEIF p_hld EQ 'X'.
+    PERFORM consolidate_hld.
+  ELSEIF p_hldpm EQ 'X'.
+    PERFORM consolidate_hldpm.
+  ENDIF.
+
+  IF i_bv[] IS NOT INITIAL.
+    PERFORM download_csv.
+    PERFORM display_alv USING i_bv.
+  ELSEIF i_hld[] IS NOT INITIAL.
+    PERFORM download_csv.
+    PERFORM display_alv USING i_hld.
+  ELSEIF i_hldpm[] IS NOT INITIAL.
+    PERFORM download_csv.
+    PERFORM display_alv USING i_hldpm.
+  ENDIF.
+
+
+*&---------------------------------------------------------------------*
+*  FORM CONSOLIDATE_BV                                                 *
+*&---------------------------------------------------------------------*
+FORM consolidate_bv.
+
+  DATA: lv_ind TYPE bu_text20,
+        lv_pktkur TYPE vvpktkur,
+        lv_aimicmname TYPE zzaimicmname,
+        lv_guar1 TYPE zzguar1,
+        lv_bpext TYPE bu_bpext,
+        lv_repke TYPE repke_new,
+        lv_localticker TYPE vvranlwxs,
+        lv_text TYPE text128.
+
+  PERFORM init_texthandling(rsaqexce) USING 'CL_TEXT_IDENTIFIER' SPACE SPACE.
+  LOOP AT i_positions INTO w_positions.
+    PERFORM textfield_refresh(rsaqexce).
+    PERFORM textfield_context(rsaqexce) USING 'FTI_LDB_TR_POSITIONS' w_positions.
+    CLEAR w_bv.
+    "Portfolio
+    IF w_positions-portfolio IS INITIAL.
+      w_bv-portfolio = w_positions-portfolio_tm.
+    ELSE.
+      w_bv-portfolio = w_positions-portfolio.
+    ENDIF.
+
+    "Transaction Type
+    IF w_positions-gsart EQ 'BNF'.
+      SELECT SINGLE text_short INTO lv_ind
+               FROM tb038b
+              WHERE ind_sector = w_positions-ind_sector
+                AND spras = 'E'
+                AND istype = 'GICS'.
+      IF sy-subrc EQ 0.
+        IF w_positions-valuation_class = '0001'.
+          CONCATENATE 'Debenture' lv_ind INTO w_bv-transaction_type SEPARATED BY SPACE.
+        ELSEIF w_positions-valuation_class = '0004'.
+          CONCATENATE 'Bond' lv_ind INTO w_bv-transaction_type SEPARATED BY SPACE.
+        ENDIF.
+      ENDIF.
+    ELSE.
+      CLEAR lv_text.
+      PERFORM textfield_call(rsaqexce) USING w_positions 'FTI_LDB_TR_POSITIONS' 'GSART' lv_text.
+      IF lv_text IS NOT INITIAL.
+        w_bv-transaction_type = lv_text.
+      ENDIF.
+    ENDIF.
+
+    "FAM Security ID
+    IF w_positions-security_id IS NOT INITIAL.
+      w_bv-security_id = w_positions-security_id.
+    ELSE.
+      CALL FUNCTION 'CONVERSION_EXIT_ALPHA_OUTPUT'
+        EXPORTING
+          INPUT         = w_positions-deal_number
+        IMPORTING
+          OUTPUT        = w_bv-security_id.
+    ENDIF.
+
+    "SMF Description
+    CLEAR lv_text.
+    PERFORM textfield_call(rsaqexce) USING w_positions 'FTI_LDB_TR_POSITIONS' 'SECURITY_ID' lv_text.
+    IF lv_text IS NOT INITIAL.
+      w_bv-txt_security_id = lv_text.
+    ELSE.
+      READ TABLE i_bp INTO w_bp WITH KEY partner = w_positions-partnr.
+      IF sy-subrc EQ 0.
+        w_bv-txt_security_id    = w_bp-name_org1.
+      ENDIF.
+    ENDIF.
+
+    "Interest Rate
+    w_bv-pkond = w_positions-pkond.
+
+    "Trade Date
+    WRITE s_dat-low TO w_bv-trade_date MM/DD/YYYY.
+
+    "Quantity
+    IF w_positions-units IS INITIAL.
+      w_bv-quan1 = w_positions-nominal_amt_pc.
+      w_bv-quan2 = w_positions-nominal_amt_pc.
+    ELSE.
+      w_bv-quan1 = w_positions-units.
+      w_bv-quan2 = w_positions-units.
+    ENDIF.
+
+    "Par
+    IF w_positions-gsart = 'FDL' OR
+        w_positions-gsart = 'CAL' OR
+         w_positions-gsart = 'DLL' OR
+          w_positions-gsart = 'SHA' OR
+           w_positions-gsart = 'SRT' OR
+            w_positions-gsart = 'MFN' OR
+             w_positions-gsart = 'WRE'.
+      w_bv-par = '1'.
+    ELSEIF w_positions-gsart = 'BNF' OR
+            w_positions-gsart = 'BNI' OR
+             w_positions-gsart = 'BNS' OR
+              w_positions-gsart = 'BNV' OR
+               w_positions-gsart = 'ZCB' OR
+                w_positions-gsart = 'CBB' OR
+                 w_positions-gsart = 'BEX' OR
+                  w_positions-gsart = 'BEO'.
+      w_bv-par = '1000'.
+    ENDIF.
+
+    "Cost per Unit
+    IF w_positions-snoti = SPACE. "Money Market
+      w_bv-purch_pc = 1.
+    ELSEIF w_positions-snoti = 1. "Bond
+      w_bv-purch_pc = ( w_positions-purch_pc / w_positions-nominal_amt_pc ) * 100.
+    ELSEIF w_positions-snoti = 2. "Equities
+      w_bv-purch_pc = ( w_positions-purch_pc / w_positions-units ).
+    ENDIF.
+
+    "Nominal Amount
+    IF w_positions-units IS INITIAL.
+      w_bv-nominal_amt_pc = w_positions-nominal_amt_pc.
+    ELSE.
+      w_bv-nominal_amt_pc = w_positions-units.
+    ENDIF.
+
+    "Purchase Cost
+    w_bv-purch_cost = w_positions-purch_pc.
+
+    "Z Simulated Amortized Acquisition Cost
+    IF w_positions-snoti = SPACE. "Money Market
+      w_bv-zamor_amaqu_val_pc = w_positions-nominal_amt_pc." + w_positions-acc_interest_pc.
+    ELSE.
+      w_bv-zamor_amaqu_val_pc = w_positions-book_val_pc + w_positions-s_amort_vc.
+    ENDIF.
+
+    "Market Price
+    IF w_positions-snoti = SPACE. "Money Market
+      w_bv-market_price = 1.
+    ELSE.
+      SELECT SINGLE pktkur INTO lv_pktkur
+           FROM atras
+          WHERE ranl = w_positions-security_id
+            AND dkurs = s_dat-low.
+      IF sy-subrc EQ 0.
+        w_bv-market_price = lv_pktkur.
+      ENDIF.
+    ENDIF.
+
+    "Market Value
+    IF w_positions-snoti = SPACE. "Money Market
+      w_bv-market_pc = w_positions-nominal_amt_pc." + w_positions-acc_interest_pc.
+    ELSE.
+      w_bv-market_pc = w_positions-market_pc.
+    ENDIF.
+
+    "URGL
+    w_bv-s_val_ti_pc = w_positions-s_val_ti_pc + w_positions-val_ti_pc.
+
+    "YTM @ Cost
+    w_bv-ytm = '0'.
+
+    "Accrued Interest
+    w_bv-acc_interest_pc = w_positions-acc_interest_pc.
+
+    "SMF Description
+    CLEAR lv_text.
+    PERFORM textfield_call(rsaqexce) USING w_positions 'FTI_LDB_TR_POSITIONS' 'SECURITY_ID' lv_text.
+    IF lv_text IS NOT INITIAL.
+      w_bv-txt_security_id2 = lv_text.
+    ELSE.
+      READ TABLE i_bp INTO w_bp WITH KEY partner = w_positions-partnr.
+      IF sy-subrc EQ 0.
+        w_bv-txt_security_id2    = w_bp-name_org1.
+      ENDIF.
+    ENDIF.
+
+    "Issue Date
+    WRITE w_positions-dblfz TO w_bv-dblfz MM/DD/YYYY.
+
+    "Maturity Date
+    WRITE w_positions-delfz TO w_bv-delfz MM/DD/YYYY.
+
+    "Calculation Method
+*    SELECT SINGLE aimicmname INTO lv_aimicmname
+*         FROM ztr_maya_aimicm
+*        WHERE aimicmcode = w_positions-seffmeth.
+*    IF sy-subrc EQ 0.
+*      w_bv-aimicmname = lv_aimicmname.
+*    ENDIF.
+    w_bv-aimicmname = 'ACT/365'.
+    "Guarantor External Number
+    SELECT SINGLE guar1 INTO lv_guar1
+         FROM ztr_sec_add
+        WHERE security_id = w_positions-security_id.
+    IF sy-subrc EQ 0.
+      SELECT SINGLE bpext INTO lv_bpext
+          FROM but000
+          WHERE partner = lv_guar1.
+      IF sy-subrc EQ 0.
+        w_bv-bpext = lv_bpext.
+      ENDIF.
+    ENDIF.
+
+    "Remark for Contract
+    w_bv-zuond = w_positions-nordext.
+
+    "Key Date
+    WRITE s_dat-low TO w_bv-key_date MM/DD/YYYY.
+
+    "Local Ticker
+    SELECT SINGLE vvranlwx INTO lv_localticker
+         FROM twx2
+        WHERE ranl = w_positions-security_id
+          AND vvranlwi = '08'.
+    IF sy-subrc EQ 0.
+      w_bv-local_ticker = lv_localticker.
+    ENDIF.
+
+    "Market Value + Accrued Interest
+    IF w_positions-snoti = SPACE. "Money Market
+      w_bv-mv_ai = w_positions-nominal_amt_pc + w_positions-acc_interest_pc.
+    ELSE.
+      w_bv-mv_ai = w_positions-market_pc + w_positions-acc_interest_pc.
+    ENDIF.
+
+    "Product Type
+    w_bv-gsart = w_positions-gsart.
+
+    "Issuer ID
+    CLEAR: lv_repke, lv_bpext.
+    SELECT SINGLE repke INTO lv_repke
+         FROM vwpanla
+        WHERE ranl = w_positions-security_id.
+    IF sy-subrc EQ 0.
+     SELECT SINGLE bpext INTO lv_bpext
+     FROM but000
+     WHERE partner = lv_repke.
+     IF sy-subrc EQ 0.
+      w_bv-bpext2 = lv_bpext.
+     ENDIF.
+    ENDIF.
+    APPEND w_bv TO i_bv.
+  ENDLOOP.
+
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*  FORM CONSOLIDATE_HLD                                                *
+*&---------------------------------------------------------------------*
+FORM consolidate_hld.
+
+  DATA: lv_ind TYPE bu_text20,
+        lv_text TYPE text128,
+        lv_aimicmname TYPE zzaimicmname,
+        lv_mactype TYPE zzmac_type,
+        lv_guar1 TYPE zzguar1,
+        lv_bpext TYPE bu_bpext,
+        lv_bpext2 TYPE bu_bpext,
+        lv_localticker TYPE vvranlwxs.
+
+  PERFORM init_texthandling(rsaqexce) USING 'CL_TEXT_IDENTIFIER' SPACE SPACE.
+  LOOP AT i_positions INTO w_positions.
+    PERFORM textfield_refresh(rsaqexce).
+    PERFORM textfield_context(rsaqexce) USING 'FTI_LDB_TR_POSITIONS' w_positions.
+    CLEAR w_hld.
+
+    "Portfolio
+    IF w_positions-portfolio IS INITIAL.
+      w_hld-portfolio = w_positions-portfolio_tm.
+    ELSE.
+      w_hld-portfolio = w_positions-portfolio.
+    ENDIF.
+
+    "Dummy
+     w_hld-dummy = '60% Required'.
+
+    "Transaction Type
+    IF w_positions-gsart EQ 'BNF'.
+      SELECT SINGLE text_short INTO lv_ind
+               FROM tb038b
+              WHERE ind_sector = w_positions-ind_sector
+                AND spras = 'E'
+                AND istype = 'GICS'.
+      IF sy-subrc EQ 0.
+        IF w_positions-valuation_class = '0001'.
+          CONCATENATE 'Debenture' lv_ind INTO w_hld-transaction_type SEPARATED BY SPACE.
+        ELSEIF w_positions-valuation_class = '0004'.
+          CONCATENATE 'Bond' lv_ind INTO w_hld-transaction_type SEPARATED BY SPACE.
+        ENDIF.
+      ENDIF.
+    ELSE.
+      CLEAR lv_text.
+      PERFORM textfield_call(rsaqexce) USING w_positions 'FTI_LDB_TR_POSITIONS' 'GSART' lv_text.
+      IF lv_text IS NOT INITIAL.
+        w_hld-transaction_type = lv_text.
+      ENDIF.
+    ENDIF.
+
+    "FAM Security ID
+    IF w_positions-security_id IS NOT INITIAL.
+      w_hld-security_id = w_positions-security_id.
+    ELSE.
+      CALL FUNCTION 'CONVERSION_EXIT_ALPHA_OUTPUT'
+        EXPORTING
+          INPUT         = w_positions-deal_number
+        IMPORTING
+          OUTPUT        = w_hld-security_id.
+    ENDIF.
+
+    "SMF Description
+    CLEAR lv_text.
+    PERFORM textfield_call(rsaqexce) USING w_positions 'FTI_LDB_TR_POSITIONS' 'SECURITY_ID' lv_text.
+    IF lv_text IS NOT INITIAL.
+      w_hld-txt_security_id = lv_text.
+    ELSE.
+      READ TABLE i_bp INTO w_bp WITH KEY partner = w_positions-partnr.
+      IF sy-subrc EQ 0.
+        w_hld-txt_security_id    = w_bp-name_org1.
+      ENDIF.
+    ENDIF.
+
+    "Calculation Method
+*    SELECT SINGLE aimicmname INTO lv_aimicmname
+*         FROM ztr_maya_aimicm
+*        WHERE aimicmcode = w_positions-seffmeth.
+*    IF sy-subrc EQ 0.
+*      w_hld-aimicmname = lv_aimicmname.
+*    ENDIF.
+    w_hld-aimicmname = 'ACT/365'.
+    "Nominal Amount
+    IF w_positions-units IS INITIAL.
+      w_hld-nominal_amt_pc = w_positions-nominal_amt_pc.
+    ELSE.
+      w_hld-nominal_amt_pc = w_positions-units.
+    ENDIF.
+
+    "Issue Date
+    WRITE w_positions-dblfz TO w_hld-dblfz MM/DD/YYYY.
+
+    "Key Date
+    WRITE s_dat-low TO w_hld-key_date MM/DD/YYYY.
+
+    "Maturity Date
+    WRITE w_positions-delfz TO w_hld-delfz MM/DD/YYYY.
+
+    "Interest Rate
+    w_hld-pkond = w_positions-pkond.
+
+    "YTM @ Cost
+    w_hld-ytm = '0'.
+
+    "Market Value + Accrued Interest
+    IF w_positions-snoti = SPACE. "Money Market
+      w_hld-mv_ai = w_positions-nominal_amt_pc + w_positions-acc_interest_pc.
+    ELSE.
+      w_hld-mv_ai = w_positions-market_pc + w_positions-acc_interest_pc.
+    ENDIF.
+
+    "Quantity
+    IF w_positions-units IS INITIAL.
+      w_hld-quan1 = w_positions-nominal_amt_pc.
+    ELSE.
+      w_hld-quan1 = w_positions-units.
+    ENDIF.
+
+    "Cost per Unit
+    IF w_positions-snoti = SPACE. "Money Market
+      w_hld-purch_pc = 1.
+    ELSEIF w_positions-snoti = 1. "Bond
+      w_hld-purch_pc = ( w_positions-purch_pc / w_positions-nominal_amt_pc ) * 100.
+    ELSEIF w_positions-snoti = 2. "Equities
+      w_hld-purch_pc = ( w_positions-purch_pc / w_positions-units ).
+    ENDIF.
+
+    "Market Value
+    IF w_positions-snoti = SPACE. "Money Market
+      w_hld-market_pc = w_positions-nominal_amt_pc.
+    ELSE.
+      w_hld-market_pc = w_positions-market_pc.
+    ENDIF.
+    "MAC Type
+    SELECT SINGLE mac_type INTO lv_mactype
+         FROM ztr_sec_add
+        WHERE security_id = w_positions-security_id.
+    IF sy-subrc EQ 0.
+      w_hld-mac_type = lv_mactype.
+    ENDIF.
+
+    "Guarantor External Number
+    SELECT SINGLE guar1 INTO lv_guar1
+         FROM ztr_sec_add
+        WHERE security_id = w_positions-security_id.
+    IF sy-subrc EQ 0.
+      SELECT SINGLE bpext INTO lv_bpext
+          FROM but000
+          WHERE partner = lv_guar1.
+      IF sy-subrc EQ 0.
+        w_hld-bpext = lv_bpext.
+      ENDIF.
+    ENDIF.
+
+    "Key Date
+    WRITE s_dat-low TO w_hld-key_date2 MM/DD/YYYY.
+
+    "Issuer External Number
+    SELECT SINGLE bpext INTO lv_bpext2
+    FROM but000
+    WHERE partner = w_positions-partnr.
+    IF sy-subrc EQ 0.
+      w_hld-bpext2 = lv_bpext2.
+    ENDIF.
+
+    "Local Ticker
+    SELECT SINGLE vvranlwx INTO lv_localticker
+         FROM twx2
+        WHERE ranl = w_positions-security_id
+          AND vvranlwi = '08'.
+    IF sy-subrc EQ 0.
+      w_hld-local_ticker = lv_localticker.
+    ENDIF.
+
+    "Purchase Cost
+    w_hld-purch_cost = w_positions-purch_pc.
+
+    "Issuer Sector
+    w_hld-ind_sector = w_positions-ind_sector.
+
+    "Issuer Sector Text
+    CLEAR lv_text.
+    PERFORM textfield_call(rsaqexce) USING w_positions 'FTI_LDB_TR_POSITIONS' 'IND_SECTOR' lv_text.
+    IF lv_text IS NOT INITIAL.
+      w_hld-txt_ind_sector = lv_text.
+    ENDIF.
+
+    "Product Type
+    w_hld-gsart = w_positions-gsart.
+
+    APPEND w_hld TO i_hld.
+  ENDLOOP.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*  FORM CONSOLIDATE_HLDPM                                              *
+*&---------------------------------------------------------------------*
+FORM consolidate_hldpm.
+
+  DATA: lv_text TYPE text128,
+        lv_bpext TYPE bu_bpext,
+        lv_guar1 TYPE zzguar1,
+        lv_rating TYPE bp_rating,
+        lv_grade TYPE bp_grade,
+        lv_localticker TYPE vvranlwxs,
+        lv_xrating TYPE bp_xrating.
+
+  PERFORM init_texthandling(rsaqexce) USING 'CL_TEXT_IDENTIFIER' SPACE SPACE.
+  LOOP AT i_positions INTO w_positions.
+    PERFORM textfield_refresh(rsaqexce).
+    PERFORM textfield_context(rsaqexce) USING 'FTI_LDB_TR_POSITIONS' w_positions.
+    CLEAR w_hldpm.
+
+    "Portfolio
+    IF w_positions-portfolio IS INITIAL.
+      w_hldpm-portfolio = w_positions-portfolio_tm.
+    ELSE.
+      w_hldpm-portfolio = w_positions-portfolio.
+    ENDIF.
+
+    "Product Description
+    CLEAR lv_text.
+    PERFORM textfield_call(rsaqexce) USING w_positions 'FTI_LDB_TR_POSITIONS' 'GSART' lv_text.
+    IF lv_text IS NOT INITIAL.
+      w_hldpm-txt_gsart = lv_text.
+    ENDIF.
+
+    "Industry
+    CLEAR lv_text.
+    PERFORM textfield_call(rsaqexce) USING w_positions 'FTI_LDB_TR_POSITIONS' 'IND_SECTOR' lv_text.
+    IF lv_text IS NOT INITIAL.
+      w_hldpm-txt_ind_sector = lv_text.
+    ENDIF.
+
+    "Local Ticker
+    SELECT SINGLE vvranlwx INTO lv_localticker
+         FROM twx2
+        WHERE ranl = w_positions-security_id
+          AND vvranlwi = '08'.
+    IF sy-subrc EQ 0.
+      w_hldpm-local_ticker = lv_localticker.
+    ELSE.
+      SELECT SINGLE vvranlwx INTO lv_localticker
+           FROM twx2
+          WHERE ranl = w_positions-deal_number
+            AND vvranlwi = '08'.
+      IF sy-subrc EQ 0.
+        w_hldpm-local_ticker = lv_localticker.
+      ENDIF.
+    ENDIF.
+
+    "Issuer External Number
+    CLEAR lv_bpext.
+    SELECT SINGLE bpext INTO lv_bpext
+    FROM but000
+    WHERE partner = w_positions-partnr.
+    IF sy-subrc EQ 0.
+      w_hldpm-issuer_ext_no = lv_bpext.
+    ENDIF.
+
+    "Guarantor External Number
+    SELECT SINGLE guar1 INTO lv_guar1
+         FROM ztr_sec_add
+        WHERE security_id = w_positions-security_id.
+    IF sy-subrc EQ 0.
+      SELECT SINGLE bpext INTO lv_bpext
+          FROM but000
+          WHERE partner = lv_guar1.
+      IF sy-subrc EQ 0.
+        w_hldpm-guarantor_id = lv_bpext.
+      ENDIF.
+
+    ENDIF.
+
+    "Security Rating
+    CLEAR lv_rating.
+    SELECT rating INTO lv_rating UP TO 1 ROWS
+    FROM vwprating
+    WHERE security_number = w_positions-security_id
+      AND ( institute = 'MOD' OR institute = 'S&P' )
+     ORDER BY valid_from DESCENDING
+              institute DESCENDING.
+      IF sy-subrc EQ 0.
+        SELECT SINGLE xrating INTO lv_xrating FROM tp06t
+          WHERE rating = lv_rating
+            AND langu = 'EN'.
+          IF sy-subrc EQ 0.
+            w_hldpm-issuer_rating = lv_xrating. "Security Rating
+          ENDIF.
+      ENDIF.
+    ENDSELECT.
+
+    "Security ORR Rating
+    CLEAR lv_rating.
+    SELECT rating INTO lv_rating UP TO 1 ROWS
+    FROM vwprating
+    WHERE security_number = w_positions-security_id
+      AND institute = 'AIA'
+     ORDER BY valid_from DESCENDING.
+      IF sy-subrc EQ 0.
+        SELECT SINGLE xrating INTO lv_xrating FROM tp06t
+          WHERE rating = lv_rating
+            AND langu = 'EN'.
+          IF sy-subrc EQ 0.
+            w_hldpm-sec_orr_rating = lv_xrating. "Security ORR Rating
+          ENDIF.
+      ENDIF.
+    ENDSELECT.
+
+    "Issuer Rating
+    CLEAR lv_grade.
+    SELECT grade INTO lv_grade UP TO 1 ROWS
+    FROM bp1012
+    WHERE partner = w_positions-partnr
+      AND ( grade_method = 'MOODY_LT' OR grade_method = 'S&P_LT')
+      ORDER BY grade_method DESCENDING.
+    IF sy-subrc EQ 0.
+      w_hldpm-issuer_rating2    = lv_grade.
+    ENDIF.
+    ENDSELECT.
+    "Issuer ORR Rating
+    CLEAR lv_grade.
+    SELECT SINGLE grade INTO lv_grade
+    FROM bp1012
+    WHERE partner = w_positions-partnr
+      AND grade_method = 'MNY_MRKET'.
+    IF sy-subrc EQ 0.
+      w_hldpm-issuer_orr_rating    = lv_grade.
+    ENDIF.
+    "Dummy
+    w_hldpm-dummy = '0'.
+
+    "Issue Date
+    WRITE w_positions-dblfz TO w_hldpm-issue_date MM/DD/YYYY.
+
+    "Maturity Date
+    WRITE w_positions-delfz TO w_hldpm-maturity_date MM/DD/YYYY.
+
+    "Coupon Rate
+    w_hldpm-coupon_rate = w_positions-pkond.
+
+    "YTM
+    w_hldpm-ytm = '0'.
+
+    "Nominal
+    IF w_positions-nominal_amt_pc IS INITIAL.
+      w_hldpm-nominal_units = w_positions-units.
+    ELSE.
+      w_hldpm-nominal_units = w_positions-nominal_amt_pc.
+    ENDIF.
+
+
+    "Book Value
+    IF w_positions-snoti = SPACE. "Money Market
+      w_hldpm-book_value = w_positions-nominal_amt_pc." + w_positions-acc_interest_pc.
+    ELSE.
+      w_hldpm-book_value = w_positions-book_val_pc + w_positions-s_amort_vc.
+    ENDIF.
+
+    "Market Yield
+    w_hldpm-market_yield = '0'.
+
+    "Market Value + Accrued Interest
+    IF w_positions-snoti = SPACE. "Money Market
+      w_hldpm-mv_ai = w_positions-nominal_amt_pc + w_positions-acc_interest_pc.
+    ELSE.
+      w_hldpm-mv_ai = w_positions-market_pc + w_positions-acc_interest_pc.
+    ENDIF.
+
+    "Accrued Interest
+    w_hldpm-accrued_int = w_positions-acc_interest_pc.
+
+    "URGL
+    w_hldpm-urgl = w_positions-s_val_ti_pc.
+
+    APPEND w_hldpm TO i_hldpm.
+  ENDLOOP.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*  FORM MAP_LDB_PARAMS                                                 *
+*&---------------------------------------------------------------------*
+FORM map_ldb_params TABLES pi_sin pi_sout USING pi_type pi_pin pi_pout.
+  IF pi_type EQ 'S'.
+    IF pi_sin IS NOT INITIAL.
+      CLEAR pi_sout.
+      REFRESH pi_sout.
+      APPEND LINES OF pi_sin TO pi_sout.
+    ENDIF.
+  ELSEIF pi_type EQ 'P'.
+    CLEAR pi_pout.
+    pi_pout = pi_pin.
+  ENDIF.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*  FORM LDB_PARAMS                                                     *
+*&---------------------------------------------------------------------*
+FORM ldb_params.
+  DATA: lt_dummy TYPE STANDARD TABLE OF string.
+  REFRESH: s_bukrs, s_vlarea, s_valcls, s_rportb, s_sanlf, s_gsart, s_partnr, s_posccy,
+           s_dats, s_por.
+
+  IF p_dea1 IS NOT INITIAL.
+    IF s_rpo-low IS NOT INITIAL.
+      LOOP AT s_rpo.
+        s_por-sign = 'I'.
+        s_por-option = 'EQ'.
+        s_por-low = s_rpo-low.
+        APPEND s_por.
+      ENDLOOP.
+    ENDIF.
+  ENDIF.
+*Selections Parameters
+  PERFORM map_ldb_params TABLES lt_dummy lt_dummy USING 'P' p_sec1 p_sec.
+  PERFORM map_ldb_params TABLES lt_dummy lt_dummy USING 'P' p_dea1 p_dea.
+  PERFORM map_ldb_params TABLES lt_dummy lt_dummy USING 'P' p_loa1 p_loa.
+  PERFORM map_ldb_params TABLES lt_dummy lt_dummy USING 'P' p_pos1 p_pos.
+  PERFORM map_ldb_params TABLES s_buk s_bukrs USING 'S' SPACE SPACE.
+  PERFORM map_ldb_params TABLES s_vla s_vlarea USING 'S' SPACE SPACE.
+  PERFORM map_ldb_params TABLES s_val s_valcls USING 'S' SPACE SPACE.
+  PERFORM map_ldb_params TABLES s_rpo s_rportb USING 'S' SPACE SPACE.
+  PERFORM map_ldb_params TABLES s_san s_sanlf USING 'S' SPACE SPACE.
+  PERFORM map_ldb_params TABLES s_gsa s_gsart USING 'S' SPACE SPACE.
+  PERFORM map_ldb_params TABLES s_par s_partnr USING 'S' SPACE SPACE.
+  PERFORM map_ldb_params TABLES s_pos s_posccy USING 'S' SPACE SPACE.
+  PERFORM map_ldb_params TABLES s_dat s_dats USING 'S' SPACE SPACE.
+  PERFORM map_ldb_params TABLES lt_dummy lt_dummy USING 'P' p_rst p_rst_pb.
+  PERFORM map_ldb_params TABLES lt_dummy lt_dummy USING 'P' p_exp p_explan.
+  PERFORM map_ldb_params TABLES lt_dummy lt_dummy USING 'P' p_kdi p_kdime.
+
+*Securities Parameters
+  PERFORM map_ldb_params TABLES s_ran s_ranlse USING 'S' SPACE SPACE.
+  PERFORM map_ldb_params TABLES s_rld s_rldepo USING 'S' SPACE SPACE.
+  PERFORM map_ldb_params TABLES s_act s_acctyp USING 'S' SPACE SPACE.
+  PERFORM map_ldb_params TABLES lt_dummy lt_dummy USING 'P' p_sac p_sacccp.
+
+*Loans Parameters
+  PERFORM map_ldb_params TABLES s_lvd s_ranlvd USING 'S' SPACE SPACE.
+
+*OTC Transactions Parameters
+  PERFORM map_ldb_params TABLES s_rfh s_rfha USING 'S' SPACE SPACE.
+  PERFORM map_ldb_params TABLES s_por s_porttm USING 'S' SPACE SPACE.
+  PERFORM map_ldb_params TABLES s_sfh s_sfhart USING 'S' SPACE SPACE.
+  PERFORM map_ldb_params TABLES s_rma s_rmaid USING 'S' SPACE SPACE.
+  PERFORM map_ldb_params TABLES s_zuo s_zuond USING 'S' SPACE SPACE.
+  PERFORM map_ldb_params TABLES s_ref s_refer USING 'S' SPACE SPACE.
+  PERFORM map_ldb_params TABLES s_mer s_merkm USING 'S' SPACE SPACE.
+  PERFORM map_ldb_params TABLES s_fin s_finpro USING 'S' SPACE SPACE.
+  PERFORM map_ldb_params TABLES lt_dummy lt_dummy USING 'P' p_lcy p_lcyint.
+
+*Listed Derivatives Parameters
+  PERFORM map_ldb_params TABLES s_lof s_ranlof USING 'S' SPACE SPACE.
+  PERFORM map_ldb_params TABLES s_pac s_posacc USING 'S' SPACE SPACE.
+  PERFORM map_ldb_params TABLES s_lot s_lottra USING 'S' SPACE SPACE.
+  PERFORM map_ldb_params TABLES s_lng s_lngsrt USING 'S' SPACE SPACE.
+
+*Control Parameters
+  PERFORM map_ldb_params TABLES lt_dummy lt_dummy USING 'P' '01'  p_auswt.  "Evaluation Type
+  PERFORM map_ldb_params TABLES lt_dummy lt_dummy USING 'P' '0'   p_shift.  "Market data shift rule
+  PERFORM map_ldb_params TABLES lt_dummy lt_dummy USING 'P' '05'  p_kursa.  "Price Type for evaluation: 05 Closing
+*  PERFORM map_ldb_params TABLES lt_dummy lt_dummy USING 'P' 'USD' p_anzgw.  "Display Currency: USD
+*  PERFORM map_ldb_params TABLES lt_dummy lt_dummy USING 'P' '806' p_numbr.  "Currency Translation Type: 806
+  PERFORM map_ldb_params TABLES lt_dummy lt_dummy USING 'P' '3'   p_bilstb. "Remaining Term Based On: 3 Key Date
+    PERFORM map_ldb_params TABLES lt_dummy lt_dummy USING 'P' 'GICS' p_istype. "Industry Type
+  PERFORM map_ldb_params TABLES lt_dummy lt_dummy USING 'P' p_rev p_revflw.
+  PERFORM map_ldb_params TABLES lt_dummy lt_dummy USING 'P' p_his p_histkr.
+  PERFORM map_ldb_params TABLES lt_dummy lt_dummy USING 'P' p_err p_errlog.
+  PERFORM map_ldb_params TABLES lt_dummy lt_dummy USING 'P' p_log p_logsav.
+  PERFORM map_ldb_params TABLES lt_dummy lt_dummy USING 'P' p_cde p_cdense.
+  PERFORM map_ldb_params TABLES lt_dummy lt_dummy USING 'P' 'X'   p_nonull.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*  FORM MODIFY_SEL_SCREEN                                              *
+*&---------------------------------------------------------------------*
+FORM modify_sel_screen.
+  LOOP AT SCREEN.
+    CASE screen-group1.
+      WHEN 'SEC'.
+*        IF p_sec1 IS INITIAL.
+          screen-active = 1.
+          MODIFY SCREEN.
+*        ENDIF.
+      WHEN 'LOA'.
+*        IF p_loa1 IS INITIAL.
+          screen-active = 0.
+          MODIFY SCREEN.
+*        ENDIF.
+      WHEN 'POS'.
+*        IF p_pos1 IS INITIAL.
+          screen-active = 0.
+          MODIFY SCREEN.
+*        ENDIF.
+      WHEN 'OTC'.
+*        IF p_dea1 IS INITIAL.
+          screen-active = 0.
+          MODIFY SCREEN.
+*        ENDIF.
+    ENDCASE.
+
+    IF screen-group2 = 'DBS'.     "hide ldb parameters
+      screen-active = '0'.
+      MODIFY SCREEN.
+    ENDIF.
+  ENDLOOP.
+
+  IF p_dea1 IS NOT INITIAL.
+    IF s_rpo-low IS NOT INITIAL.
+      s_por-sign = 'I'.
+      s_por-option = 'EQ'.
+      s_por-low = s_rpo-low.
+      APPEND s_por.
+    ENDIF.
+  ENDIF.
+ENDFORM.                    " MODIFY_SEL_SCREEN
+
+*&---------------------------------------------------------------------*
+*  FORM SET_INIT                                                       *
+*&---------------------------------------------------------------------*
+FORM set_init.
+
+  p_sec = abap_true.
+  p_pos = abap_true.
+  p_loa = abap_true.
+  p_dea = abap_true.
+
+* control parameters
+  p_auswt = '01'. "Evaluation Type
+  p_shift = '0'.  "Market data shift rule
+  p_kursa = '01'. "Price Type for evaluation: 01 Spot
+  p_bilstb = '3'. "Remaining Term Based On: 3 Key Date
+  p_revflw = abap_false.
+  p_histkr = abap_false.
+  p_errlog = abap_false.
+  p_logsav = abap_false.
+  p_cdense = abap_false.
+  p_nonull = abap_true.
+
+ENDFORM.                    " SET_INIT
+
+*&---------------------------------------------------------------------*
+*  FORM_CLEAR_ALV_VARIANT                                              *
+*&---------------------------------------------------------------------*
+FORM clear_alv_variant.
+  CLEAR i_alv_variant.
+  i_alv_variant-report = 'ZTRI0061'.
+ENDFORM.                    " CLEAR_ALV_VARIANT
+
+*&---------------------------------------------------------------------*
+*  FORM DOWNLOAD_CSV                                                   *
+*&---------------------------------------------------------------------*
+FORM download_csv.
+  DATA: lv_len TYPE i,
+        lv_out   TYPE string.
+  DATA: lr_csv TYPE REF TO cl_rsda_csv_converter.
+
+  DATA: lw_data TYPE c LENGTH 4096,
+        li_data TYPE STANDARD TABLE OF string.
+  lv_len = strlen( p_down ) - 1.
+  IF p_down+lv_len(1) <> '\'.
+     CONCATENATE p_down '\' INTO p_down.
+  ENDIF.
+
+  IF p_bv EQ 'X' AND i_bv[] IS NOT INITIAL.
+    REFRESH li_data.
+    CONCATENATE p_down 'BV_' s_dat-low '.csv' INTO lv_out.
+
+    CALL METHOD cl_rsda_csv_converter=>create
+      RECEIVING
+        r_r_conv = lr_csv.
+
+    LOOP AT i_bv INTO w_bv.
+      CALL METHOD lr_csv->structure_to_csv
+        EXPORTING
+          i_s_data = w_bv
+        IMPORTING
+          e_data = lw_data.
+      APPEND lw_data TO li_data.
+    ENDLOOP.
+  ELSEIF p_hld EQ 'X' AND i_hld[] IS NOT INITIAL.
+    REFRESH li_data.
+    CONCATENATE p_down 'HLD_' s_dat-low '.csv' INTO lv_out.
+
+    CALL METHOD cl_rsda_csv_converter=>create
+      RECEIVING
+        r_r_conv = lr_csv.
+
+    LOOP AT i_hld INTO w_hld.
+      CALL METHOD lr_csv->structure_to_csv
+        EXPORTING
+          i_s_data = w_hld
+        IMPORTING
+          e_data = lw_data.
+      APPEND lw_data TO li_data.
+    ENDLOOP.
+  ELSEIF p_hldpm EQ 'X' AND i_hldpm[] IS NOT INITIAL.
+    REFRESH li_data.
+    CONCATENATE p_down 'HLDPM_' s_dat-low '.csv' INTO lv_out.
+
+    CALL METHOD cl_rsda_csv_converter=>create
+      RECEIVING
+        r_r_conv = lr_csv.
+
+    LOOP AT i_hldpm INTO w_hldpm.
+      CALL METHOD lr_csv->structure_to_csv
+        EXPORTING
+          i_s_data = w_hldpm
+        IMPORTING
+          e_data = lw_data.
+      APPEND lw_data TO li_data.
+    ENDLOOP.
+  ENDIF.
+
+  IF li_data IS NOT INITIAL.
+  cl_gui_frontend_services=>gui_download(
+    EXPORTING
+      filename                  = lv_out
+      filetype                  = 'ASC'
+      write_field_separator     = abap_true
+      dat_mode                  = abap_true
+      confirm_overwrite         = space
+    CHANGING
+      data_tab                  = li_data
+    EXCEPTIONS
+      file_write_error          = 1
+      no_batch                  = 2
+      gui_refuse_filetransfer   = 3
+      invalid_type              = 4
+      no_authority              = 5
+      unknown_error             = 6
+      header_not_allowed        = 7
+      separator_not_allowed     = 8
+      filesize_not_allowed      = 9
+      header_too_long           = 10
+      dp_error_create           = 11
+      dp_error_send             = 12
+      dp_error_write            = 13
+      unknown_dp_error          = 14
+      access_denied             = 15
+      dp_out_of_memory          = 16
+      disk_full                 = 17
+      dp_timeout                = 18
+      file_not_found            = 19
+      dataprovider_exception    = 20
+      control_flush_error       = 21
+      not_supported_by_gui      = 22
+      error_no_gui              = 23
+      others                    = 24
+         ).
+  ENDIF.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*  FORM DISPLAY_ALV                                                    *
+*&---------------------------------------------------------------------*
+FORM display_alv USING pi_table TYPE STANDARD TABLE.
+  DATA: lv_key TYPE salv_s_layout_key,
+        lv_title TYPE lvc_title,
+        lv_tmp TYPE string,
+        lv_date(10) TYPE c.
+
+  TRY.
+      cl_salv_table=>factory(
+        IMPORTING
+          r_salv_table = o_table
+        CHANGING
+          t_table      = pi_table ).
+    CATCH cx_salv_msg.                                  "#EC NO_HANDLER
+  ENDTRY.
+  o_columns_tab = o_table->get_columns( ).
+  o_columns_tab->set_optimize( abap_true ).
+
+  o_display = o_table->get_display_settings( ).
+
+  CLEAR: lv_title, lv_date.
+  WRITE s_dat-low TO lv_date MM/DD/YYYY.
+  IF p_bv EQ 'X'.
+    CONCATENATE sy-title '-' 'Book Value on Key Date:' INTO lv_tmp SEPARATED BY SPACE.
+    CONCATENATE lv_tmp lv_date INTO lv_title SEPARATED BY SPACE.
+  ELSEIF p_hld EQ 'X'.
+    CONCATENATE sy-title '-' 'Holding on Key Date:' INTO lv_tmp SEPARATED BY SPACE.
+    CONCATENATE lv_tmp lv_date INTO lv_title SEPARATED BY SPACE.
+  ELSEIF p_hldpm EQ 'X'.
+    CONCATENATE sy-title '-' 'HLDPM on Key Date:' INTO lv_tmp SEPARATED BY SPACE.
+    CONCATENATE lv_tmp lv_date INTO lv_title SEPARATED BY SPACE.
+  ENDIF.
+
+  o_display->set_list_header( lv_title ).
+  o_functions = o_table->get_functions( ).
+  o_functions->set_all( ).
+
+  o_layout = o_table->get_layout( ).
+  lv_key-report = sy-repid.
+  o_layout->set_key( lv_key ).
+
+  o_layout->set_save_restriction( if_salv_c_layout=>restrict_none ).
+  o_layout->set_default( abap_true ).
+  IF p_var IS NOT INITIAL.
+    o_layout->set_initial_layout( p_var ).
+  endif.
+
+  PERFORM build_fieldcatalog.
+
+  TRY.
+      o_table->display( ).
+    CATCH cx_salv_msg.                                  "#EC NO_HANDLER
+  ENDTRY.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*  FORM SET_TECHNICAL                                                  *
+*&---------------------------------------------------------------------*
+FORM set_technical USING pi_fieldname TYPE lvc_fname.
+  TRY.
+      o_column ?= o_columns_tab->get_column( pi_fieldname ).
+      o_column->set_technical( abap_true ).
+    CATCH cx_salv_not_found.                        "#EC NO_HANDLER
+  ENDTRY.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*  FORM SET_COLUMN_TEXT                                                *
+*&---------------------------------------------------------------------*
+FORM set_column_text USING pi_fieldname TYPE lvc_fname
+                           pi_color TYPE lvc_col
+                           pi_short TYPE scrtext_s
+                           pi_medium TYPE scrtext_m
+                           pi_long TYPE scrtext_l
+                           pi_outlen TYPE lvc_outlen
+                           pi_noout TYPE c.
+
+  DATA: ls_color TYPE lvc_s_colo.
+
+  TRY.
+      o_column ?= o_columns_tab->get_column( pi_fieldname ).
+      ls_color-col = pi_color.
+      o_column->set_color( ls_color ).
+      IF pi_short NE SPACE.
+        o_column->set_short_text( pi_short ).
+      ENDIF.
+
+      IF pi_medium NE SPACE.
+        o_column->set_medium_text( pi_medium ).
+      ENDIF.
+
+      IF pi_long NE SPACE.
+        o_column->set_long_text( pi_long ).
+      ENDIF.
+
+      IF pi_outlen NE 0.
+        o_column->set_output_length( pi_outlen ).
+      ENDIF.
+      IF pi_noout EQ 'X'.
+        o_column->set_visible( abap_false ).
+      ENDIF.
+    CATCH cx_salv_not_found.                        "#EC NO_HANDLER
+  ENDTRY.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*  FORM BUILD_FIELDCATALOG                                             *
+*&---------------------------------------------------------------------*
+FORM build_fieldcatalog.
+
+  IF p_bv EQ 'X'.
+     PERFORM set_column_text USING:
+      'PORTFOLIO' 0 SPACE SPACE 'Portfolio' 60 SPACE,
+      'TRANSACTION_TYPE' 0 SPACE SPACE 'Transaction Type' 60 SPACE,
+      'SECURITY_ID' 0 SPACE SPACE 'Security ID' 60 SPACE,
+      'TXT_SECURITY_ID' 0 SPACE SPACE 'SMF Desc' 60 SPACE,
+      'PKOND' 0 SPACE SPACE 'Interest Rate' 60 SPACE,
+      'TRADE_DATE' 0 SPACE SPACE 'Trade Date' 60 SPACE,
+      'QUAN1' 0 SPACE SPACE 'Quantity' 60 SPACE,
+      'QUAN2' 0 SPACE SPACE 'Quantity' 60 SPACE,
+      'PAR' 0 SPACE SPACE 'Par' 60 SPACE,
+      'PURCH_PC' 0 SPACE SPACE 'Cost per Unit' 60 SPACE,
+      'NOMINAL_AMT_PC' 0 SPACE SPACE 'Nominal Amount' 60 SPACE,
+      'PURCH_COST' 0 SPACE SPACE 'Purchase Cost' 60 SPACE,
+      'ZAMOR_AMQU_VAL_PC' 0 SPACE SPACE 'ZSim.Amor.Acq.Value' 60 SPACE,
+      'MARKET_PRICE' 0 SPACE SPACE 'Market Price' 60 SPACE,
+      'MARKET_PC' 0 SPACE SPACE 'Market Value' 60 SPACE,
+      'S_VAL_TI_PC' 0 SPACE SPACE 'URGL' 60 SPACE,
+      'YTM' 0 SPACE SPACE 'YTM@Cost' 60 SPACE,
+      'ACC_INTEREST_PC' 0 SPACE SPACE 'Accrued Interest' 60 SPACE,
+      'TXT_SECURITY_ID2' 0 SPACE SPACE 'SMF Desc' 60 SPACE,
+      'DBLFZ' 0 SPACE SPACE 'Issue Date' 60 SPACE,
+      'DELFZ' 0 SPACE SPACE 'Maturity Date' 60 SPACE,
+      'AIMICMNAME' 0 SPACE SPACE 'Calc Method' 60 SPACE,
+      'BPEXT' 0 SPACE SPACE 'Guarantor Ext No.' 60 SPACE,
+      'ZUOND' 0 SPACE SPACE 'Remark' 60 SPACE,
+      'KEYDATE' 0 SPACE SPACE 'Key Date' 60 SPACE,
+      'LOCAL_TICKER' 0 SPACE SPACE 'Local Ticker' 60 SPACE,
+      'MV_AI' 0 SPACE SPACE 'Market Value & Accrued Interest' 60 SPACE,
+      'GSART' 0 SPACE SPACE 'Product Type' 60 SPACE,
+      'BPEXT2' 0 SPACE SPACE 'Issuer ID' 60 SPACE.
+  ELSEIF p_hld EQ 'X'..
+     PERFORM set_column_text USING:
+      'PORTFOLIO' 0 SPACE SPACE 'Portfolio' 60 SPACE,
+      'DUMMY' 0 SPACE SPACE 'Dummy' 60 SPACE,
+      'TRANSACTION_TYPE' 0 SPACE SPACE 'Transaction Type' 60 SPACE,
+      'SECURITY_ID' 0 SPACE SPACE 'Security ID' 60 SPACE,
+      'TXT_SECURITY_ID' 0 SPACE SPACE 'SMF Desc' 60 SPACE,
+      'AIMICMNAME' 0 SPACE SPACE 'Calc Method' 60 SPACE,
+      'NOMINAL_AMT_PC' 0 SPACE SPACE 'Nominal Amount' 60 SPACE,
+      'DBLFZ' 0 SPACE SPACE 'Issue Date' 60 SPACE,
+      'KEYDATE' 0 SPACE SPACE 'Key Date' 60 SPACE,
+      'TRADE_DATE' 0 SPACE SPACE 'Trade Date' 60 SPACE,
+      'DELFZ' 0 SPACE SPACE 'Maturity Date' 60 SPACE,
+      'PKOND' 0 SPACE SPACE 'Interest Rate' 60 SPACE,
+      'YTM' 0 SPACE SPACE 'YTM@Cost' 60 SPACE,
+      'MV_AI' 0 SPACE SPACE 'Market Value & Accrued Interest' 60 SPACE,
+      'QUAN1' 0 SPACE SPACE 'Quantity' 60 SPACE,
+      'PURCH_PC' 0 SPACE SPACE 'Cost per Unit' 60 SPACE,
+      'MARKET_PC' 0 SPACE SPACE 'Market Value' 60 SPACE,
+      'MAC_TYPE' 0 SPACE SPACE 'MAC Type' 60 SPACE,
+      'BPEXT' 0 SPACE SPACE 'Guarantor Ext No.' 60 SPACE,
+      'KEYDATE2' 0 SPACE SPACE 'Key Date' 60 SPACE,
+      'BPEXT2' 0 SPACE SPACE 'Issuer Ext No.' 60 SPACE,
+      'LOCAL_TICKER' 0 SPACE SPACE 'Local Ticker' 60 SPACE,
+      'PURCH_COST' 0 SPACE SPACE 'Purchase Cost' 60 SPACE,
+      'IND_SECTOR' 0 SPACE SPACE 'Industry' 60 SPACE,
+      'TXT_IND_SECTOR' 0 SPACE SPACE 'Industry Desc' 60 SPACE,
+      'GSART' 0 SPACE SPACE 'Product Type' 60 SPACE.
+  ELSEIF p_hldpm EQ 'X'..
+     PERFORM set_column_text USING:
+      'PORTFOLIO' 0 SPACE SPACE 'Portfolio' 60 SPACE,
+      'TXT_GSART' 0 SPACE SPACE 'Product Type Desc' 60 SPACE,
+      'IND_SECTOR' 0 SPACE SPACE 'Industry' 60 SPACE,
+      'LOCAL_TICKER' 0 SPACE SPACE 'Local Ticker' 60 SPACE,
+      'ISSUER_EXT_NO' 0 SPACE SPACE 'Issuer Ext No' 60 SPACE,
+      'GUARANTOR_ID' 0 SPACE SPACE 'Guarantor ID' 60 SPACE,
+      'ISSUER_RATING' 0 SPACE SPACE 'Issuer Rating' 60 SPACE,
+      'DUMMY' 0 SPACE SPACE 'Dummy' 60 SPACE,
+      'ISSUE_DATE' 0 SPACE SPACE 'Issue Date' 60 SPACE,
+      'MATURITY_DATE' 0 SPACE SPACE 'Maturity Date' 60 SPACE,
+      'COUPON_RATE' 0 SPACE SPACE 'Coupon Rate' 60 SPACE,
+      'YTM' 0 SPACE SPACE 'YTM' 60 SPACE,
+      'NOMINAL_UNITS' 0 SPACE SPACE 'Nominal Units' 60 SPACE,
+      'BOOK_VALUE' 0 SPACE SPACE 'Book Value' 60 SPACE,
+      'MARKET_YIELD' 0 SPACE SPACE 'Market Yield' 60 SPACE,
+      'MV_AI' 0 SPACE SPACE 'Market Value & Accrued Interest' 60 SPACE,
+      'ACCRUED_INT' 0 SPACE SPACE 'Accrued Interest' 60 SPACE,
+      'URGL' 0 SPACE SPACE 'URGL' 60 SPACE,
+      'ISSUER_RATING2' 0 SPACE SPACE 'Issuer Rating' 60 SPACE,
+      'GUARANTOR_RATING' 0 SPACE SPACE 'Guarantor Rating' 60 SPACE,
+      'SEC_ORR_RATING' 0 SPACE SPACE 'Sec Orr Rating' 60 SPACE,
+      'ISSUER_ORR_RATING' 0 SPACE SPACE 'Issuer Orr Rating' 60 SPACE,
+      'GUARANTOR_ORR_RATING' 0 SPACE SPACE 'Guarantor Orr Rating' 60 SPACE.
+  ENDIF.
+
+
+
+
+ENDFORM.
+
+
+*&---------------------------------------------------------------------*
+*  FORM GET_DOWNLOAD_DIR                                               *
+*&---------------------------------------------------------------------*
+FORM get_download_dir USING p_localfilename.
+  DATA :  lv_title  TYPE string,
+          lv_string TYPE string.
+
+  lv_title = 'Select Download Directory'.
+
+  CALL METHOD cl_gui_frontend_services=>directory_browse
+    EXPORTING
+      window_title    = lv_title
+      initial_folder  = 'C:\'
+    CHANGING
+      selected_folder = lv_string
+    EXCEPTIONS
+      cntl_error      = 1
+      error_no_gui    = 2
+      OTHERS          = 3.
+  IF sy-subrc <> 0.
+    MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+               WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+  ENDIF.
+
+  p_localfilename = lv_string.
+  CALL METHOD cl_gui_cfw=>flush.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*  FORM GET_BP_MASTER_DATA                                             *
+*&---------------------------------------------------------------------*
+FORM get_bp_master_data.
+TYPES: BEGIN OF lt_bp3010,
+        partner TYPE bu_partner,
+        grp     TYPE bp_grp,
+       END OF lt_bp3010.
+
+TYPES: BEGIN OF lt_bp1012,
+        partner      TYPE bu_partner,
+        date_to      TYPE fsbp_rating_date_end,
+        grade_method TYPE bp_grade_method,
+        date_from    TYPE fsbp_rating_date_start,
+        grade        TYPE bp_grade,
+        date_when    TYPE fsbp_rating_date_entered,
+       END OF lt_bp1012.
+
+TYPES: BEGIN OF lt_but000,
+        partner      TYPE bu_partner,
+        name_org1    TYPE bu_nameor1,
+       END OF lt_but000.
+
+DATA: li_bp3010 TYPE STANDARD TABLE OF lt_bp3010,
+      lw_bp3010 TYPE lt_bp3010,
+      li_bp1012 TYPE STANDARD TABLE OF lt_bp1012,
+      lw_bp1012 TYPE lt_bp1012,
+      li_but000 TYPE STANDARD TABLE OF lt_but000,
+      lw_but000 TYPE lt_but000,
+      lt_positions TYPE STANDARD TABLE OF t_positions,
+      lw_positions TYPE t_positions.
+
+      REFRESH: i_bp, lt_positions, li_bp3010, li_bp1012,
+               li_but000.
+      lt_positions[] = i_positions[].
+      SORT lt_positions BY partnr.
+      DELETE ADJACENT DUPLICATES FROM lt_positions COMPARING partnr.
+
+      IF lt_positions IS NOT INITIAL.
+        SELECT partner name_org1 INTO TABLE li_but000
+        FROM but000
+        FOR ALL ENTRIES IN lt_positions
+          WHERE partner = lt_positions-partnr.
+
+        SELECT partner grp INTO TABLE li_bp3010
+        FROM bp3010
+        FOR ALL ENTRIES IN lt_positions
+          WHERE partner = lt_positions-partnr.
+
+        SELECT partner date_to grade_method date_from grade date_when INTO TABLE li_bp1012
+        FROM bp1012
+        FOR ALL ENTRIES IN lt_positions
+          WHERE partner = lt_positions-partnr.
+
+        LOOP AT lt_positions INTO lw_positions.
+          w_bp-partner = lw_positions-partnr.
+
+          READ TABLE li_but000 INTO lw_but000 WITH KEY partner = lw_positions-partnr.
+          IF sy-subrc EQ 0.
+            w_bp-name_org1 = lw_but000-name_org1.
+          ENDIF.
+
+          READ TABLE li_bp3010 INTO lw_bp3010 WITH KEY partner = lw_positions-partnr.
+          IF sy-subrc EQ 0.
+            w_bp-grp = lw_bp3010-grp.
+          ENDIF.
+
+          READ TABLE li_bp1012 INTO lw_bp1012 WITH KEY partner = lw_positions-partnr.
+          IF sy-subrc EQ 0.
+            w_bp-date_to = lw_bp1012-date_to.
+            w_bp-grade_method = lw_bp1012-grade_method.
+            w_bp-date_from = lw_bp1012-date_from.
+            w_bp-grade = lw_bp1012-grade.
+            w_bp-date_when = lw_bp1012-date_when.
+          ENDIF.
+
+          APPEND w_bp TO i_bp.
+        ENDLOOP.
+      ENDIF.
+ENDFORM.

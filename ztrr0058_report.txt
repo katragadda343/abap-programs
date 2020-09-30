@@ -1,0 +1,787 @@
+*&---------------------------------------------------------------------*
+* Program          : ZTRI0058
+* Created by       : Chua Yuan Wei (KSAP064)
+* Date             : 01 Jun 2017
+* Business Analyst : Dondapati, Koteswararao
+* Project	         : Project TH Pension & ILP
+* PIR/PCR          : 9000003082
+* Description      : Asset Allocation Report
+*&---------------------------------------------------------------------*
+*                         MODIFICATION HISTORY
+*&---------------------------------------------------------------------*
+* Changed by       : Erick Lee (KSAP082)
+* Search on        : EL38879
+* Date             : 7 Aug 2018
+* Business Analyst : Tong Keen Soon, Dondapati, Koteswararao
+* Project	         : BAU
+* PIR/PCR          : 4000038878
+* Description      : Change NAV amount from Market Val to NAV
+*&---------------------------------------------------------------------*
+* Changed by       :
+* Search on        :
+* Date             :
+* Business Analyst :
+* Project	         :
+* PIR/PCR          :
+* Description      :
+*&---------------------------------------------------------------------*
+REPORT ZTRI0058 NO STANDARD PAGE HEADING.
+
+TYPE-POOLS: SLIS.
+
+NODES: positions.
+
+TYPES: BEGIN OF t_positions.
+  INCLUDE STRUCTURE FTI_LDB_TR_POSITIONS.
+TYPES: END OF t_positions.
+
+TYPES: BEGIN OF t_summary,
+        bukrs TYPE bukrs,
+        portfolio TYPE rportb,
+        valuation_class TYPE tpm_val_class,
+        ind_sector TYPE bu_ind_sector,
+        gsart     TYPE vvsart,
+        shwhr     TYPE tb_shwhr,
+        book_val_lc TYPE fti_book_val_lc,
+        market_pc TYPE fti_market_pc,
+        acc_interest_pc TYPE fti_acc_interest_pc,
+       END OF t_summary.
+
+TYPES: BEGIN OF t_summary_port,
+        bukrs TYPE bukrs,
+        portfolio TYPE rportb,
+        shwhr     TYPE tb_shwhr,
+        book_val_lc TYPE fti_book_val_lc,
+        market_pc TYPE fti_market_pc,
+        acc_interest_pc TYPE fti_acc_interest_pc,
+       END OF t_summary_port.
+
+TYPES: BEGIN OF t_portfolio,
+        portfolio TYPE rportb,
+       END OF t_portfolio.
+
+TYPES: BEGIN OF t_percent,
+        portfolio TYPE rportb,
+        percent TYPE P DECIMALS 2,
+       END OF t_percent.
+
+TYPES: BEGIN OF t_nav,
+        bukrs TYPE bukrs,
+        portfolio TYPE rportb,
+        waers TYPE waers,
+        cash TYPE zzcash,
+        nav TYPE zznav,
+        units TYPE fti_units,
+       END OF t_nav.
+
+TYPES: BEGIN OF t_units,
+        keydate TYPE fti_stichtag,
+        bukrs TYPE bukrs,
+        portfolio TYPE rportb,
+        units TYPE fti_units,
+       END OF t_units.
+
+TYPES: BEGIN OF t_desc,
+        typ(3)   TYPE c,
+        desc(50) TYPE c,
+       END OF t_desc.
+
+DATA: v_amt TYPE tpm_amount,
+      v_pct(16) TYPE P DECIMALS 9.
+
+RANGES: s_por FOR positions-portfolio_tm.
+
+
+
+DATA: i_component TYPE cl_abap_structdescr=>component_table,
+      w_component TYPE cl_abap_structdescr=>component.
+
+
+DATA: i_positions TYPE STANDARD TABLE OF t_positions,
+      w_positions TYPE t_positions,
+      i_summary TYPE STANDARD TABLE OF t_summary,
+      w_summary TYPE t_summary,
+      i_summary_port TYPE STANDARD TABLE OF t_summary_port,
+      w_summary_port TYPE t_summary_port,
+      i_portfolio TYPE STANDARD TABLE OF t_portfolio,
+      w_portfolio TYPE t_portfolio,
+      i_desc TYPE STANDARD TABLE OF t_desc,
+      w_desc TYPE t_desc,
+      i_percent TYPE STANDARD TABLE OF t_percent,
+      w_percent TYPE t_percent,
+      i_nav TYPE STANDARD TABLE OF t_nav,
+      i_units TYPE STANDARD TABLE OF t_units,
+      w_nav TYPE t_nav,
+      w_units TYPE t_units.
+
+*&---------------------------------------------------------------------*
+*  ALV                                                                 *
+*&---------------------------------------------------------------------*
+DATA: o_table               TYPE REF TO cl_salv_table,
+      o_column              TYPE REF TO cl_salv_column_table,
+      o_columns_tab         TYPE REF TO cl_salv_columns_table,
+      o_layout              TYPE REF TO cl_salv_layout,
+
+      o_functions           TYPE REF TO cl_salv_functions,
+      o_display             TYPE REF TO cl_salv_display_settings,
+      o_label               TYPE REF TO cl_salv_form_label,
+      o_header              TYPE REF TO cl_salv_form_layout_grid.
+
+DATA: o_struct              TYPE REF TO cl_abap_datadescr,
+      o_dyntable            TYPE REF TO cl_abap_tabledescr,
+      o_data                TYPE REF TO data,
+      o_dataline            TYPE REF TO data.
+
+FIELD-SYMBOLS: <fs_data> TYPE STANDARD TABLE,
+               <fs_dataline>,
+               <fs>,
+               <fs_amt>,
+               <fs_pct>.
+*&---------------------------------------------------------------------*
+*  SELECTION-SCREEN                                                    *
+*&---------------------------------------------------------------------*
+SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE text-b01.
+ SELECT-OPTIONS:  s_buk FOR positions-bukrs MEMORY ID buk NO INTERVALS NO-EXTENSION OBLIGATORY,
+                  s_rpo FOR positions-portfolio NO INTERVALS OBLIGATORY,
+                  s_dat FOR positions-stichtag NO INTERVALS NO-EXTENSION OBLIGATORY.
+SELECTION-SCREEN END   OF BLOCK b1.
+
+*&---------------------------------------------------------------------*
+*  AT SELECTION-SCREEN OUTPUT                                          *
+*&---------------------------------------------------------------------*
+AT SELECTION-SCREEN OUTPUT.
+  PERFORM modify_sel_screen.
+
+*&---------------------------------------------------------------------*
+*  AT SELECTION-SCREEN                                                 *
+*&---------------------------------------------------------------------*
+AT SELECTION-SCREEN.
+  PERFORM ldb_params.
+
+*&---------------------------------------------------------------------*
+*  INITIALIZATION                                                      *
+*&---------------------------------------------------------------------*
+INITIALIZATION.
+  PERFORM set_init.
+
+*&---------------------------------------------------------------------*
+*  START-OF-SELECTION                                                  *
+*&---------------------------------------------------------------------*
+START-OF-SELECTION.
+
+GET positions FIELDS
+              bukrs                 "Company Code
+              gsart                 "Product Type
+              portfolio             "Portfolio
+              portfolio_tm          "Portfolio
+              valuation_class       "Valuation Class
+              ind_sector            "Industry Sector
+              shwhr                 "Local Currency
+              book_val_lc           "Book Value LC
+              market_pc
+              acc_interest_pc.
+ MOVE-CORRESPONDING positions TO w_positions.               "#EC ENHOK
+ APPEND w_positions TO i_positions.
+
+*&---------------------------------------------------------------------*
+*  END-OF-SELECTION                                                    *
+*&---------------------------------------------------------------------*
+END-OF-SELECTION.
+
+  PERFORM get_nav.
+  PERFORM consolidate.
+  PERFORM build_type.
+  PERFORM build_dyntable.
+  PERFORM display_alv.
+
+*&---------------------------------------------------------------------*
+*  FORM GET_NAV                                                        *
+*&---------------------------------------------------------------------*
+FORM get_nav.
+ REFRESH: i_nav, i_units.
+  SELECT bukrs portfolio waers cash nav units FROM ztr_ilp_nav INTO TABLE i_nav
+    WHERE bukrs IN s_buk
+      AND portfolio IN s_rpo
+      AND keydate EQ s_dat-low.
+  IF sy-subrc EQ 0.
+    SORT i_nav.
+  ENDIF.
+
+  SELECT keydate bukrs portfolio units FROM ztr_ilp_nav INTO TABLE i_units
+    WHERE bukrs IN s_buk
+      AND portfolio IN s_rpo
+      AND units <> SPACE.
+  IF sy-subrc EQ 0.
+    SORT i_units BY keydate DESCENDING.
+  ENDIF.
+ENDFORM.
+*&---------------------------------------------------------------------*
+*  FORM BUILD_DYNTABLE                                                 *
+*&---------------------------------------------------------------------*
+FORM build_dyntable.
+  DATA: lv_portfolio TYPE string,
+        lv_total TYPE tpm_amount,
+        lv_total_nav TYPE tpm_amount.
+
+  CLEAR w_component.
+  w_component-name = 'TYP'.
+  w_component-type ?= cl_abap_datadescr=>describe_by_data( w_desc-typ ).
+  APPEND w_component TO i_component.
+  CLEAR w_component.
+  w_component-name = 'DESC'.
+  w_component-type ?= cl_abap_datadescr=>describe_by_data( w_desc-desc ).
+  APPEND w_component TO i_component.
+
+  LOOP AT i_portfolio INTO w_portfolio.
+    CONCATENATE 'AMT' w_portfolio-portfolio INTO w_component-name SEPARATED BY '_'.
+    w_component-type ?= cl_abap_datadescr=>describe_by_data( v_amt ).
+    APPEND w_component TO i_component.
+    CONCATENATE 'PCT' w_portfolio-portfolio INTO w_component-name SEPARATED BY '_'.
+    w_component-type ?= cl_abap_datadescr=>describe_by_data( v_pct ).
+    APPEND w_component TO i_component.
+  ENDLOOP.
+
+  o_struct ?= cl_abap_structdescr=>create( p_components = i_component ).
+  o_dyntable = cl_abap_tabledescr=>create( p_line_type = o_struct ).
+
+  CREATE DATA o_data TYPE HANDLE o_dyntable.
+  CREATE DATA o_dataline TYPE HANDLE o_struct.
+
+  ASSIGN o_data->* TO <fs_data>.
+  ASSIGN o_dataline->* TO <fs_dataline>.
+
+  LOOP AT i_desc INTO w_desc.
+    IF w_desc-typ+0(1) EQ 'R'.
+
+      LOOP AT i_component INTO w_component.
+        IF w_component-name NE 'DESC' AND w_component-name NE 'TYP'.
+          lv_portfolio = w_component-name.
+          SHIFT lv_portfolio LEFT BY 4 PLACES.
+        ENDIF.
+
+        ASSIGN COMPONENT w_component-name OF STRUCTURE <fs_dataline> TO <fs>.
+        IF w_component-name EQ 'TYP'.
+          IF <fs> IS ASSIGNED.
+            <fs> = w_desc-typ.
+            UNASSIGN <fs>.
+          ENDIF.
+        ELSEIF w_component-name EQ 'DESC'.
+          IF <fs> IS ASSIGNED.
+            <fs> = w_desc-desc.
+            UNASSIGN <fs>.
+          ENDIF.
+        ELSEIF w_component-name CS 'AMT'.
+
+          ASSIGN COMPONENT w_component-name OF STRUCTURE <fs_dataline> TO <fs_amt>.
+          IF <fs_amt> IS ASSIGNED.
+            CASE w_desc-typ.
+              WHEN 'R01'. "Saving (Investment A/C) + P/N Call
+*                READ TABLE i_cash INTO w_cash WITH KEY portfolio = lv_portfolio.
+*                IF sy-subrc EQ 0.
+*                  <fs_amt> = <fs_amt> + w_cash-cash.
+*                ENDIF.
+
+                LOOP AT i_summary INTO w_summary WHERE portfolio = lv_portfolio AND
+                                                           gsart = 'CAL'.
+                  <fs_amt> = <fs_amt> + w_summary-book_val_lc + w_summary-acc_interest_pc.
+                ENDLOOP.
+              WHEN 'R02'. "Bank Time Deposit
+                LOOP AT i_summary INTO w_summary WHERE portfolio = lv_portfolio AND
+                                                       ( gsart = 'FDL' OR gsart = 'DLL' ).
+                  <fs_amt> = <fs_amt> + w_summary-book_val_lc + w_summary-acc_interest_pc.
+                ENDLOOP.
+              WHEN 'R03'. "Bank Debenture and B/E
+                LOOP AT i_summary INTO w_summary WHERE portfolio = lv_portfolio AND
+                                                       valuation_class = '0001' AND
+                                                       ind_sector = '401010' AND
+                                                       ( gsart = 'BNF' OR
+                                                         gsart = 'BNV' OR
+                                                         gsart = 'BNS' OR
+                                                         gsart = 'BEX' OR
+                                                         gsart = 'ZCB' ).
+                  <fs_amt> = <fs_amt> + w_summary-market_pc + w_summary-acc_interest_pc.
+                ENDLOOP.
+              WHEN 'R04'. "Government Bond + TBill + CB + BOT + SoE(G)
+                LOOP AT i_summary INTO w_summary WHERE portfolio = lv_portfolio AND
+                                                       valuation_class = '0004' AND
+                                                       ( gsart = 'BNF' OR
+                                                         gsart = 'BNV' OR
+                                                         gsart = 'BNI' OR
+                                                         gsart = 'BNS' OR
+                                                         gsart = 'BEX' OR
+                                                         gsart = 'ZCB' ).
+                  <fs_amt> = <fs_amt> + w_summary-market_pc + w_summary-acc_interest_pc..
+                ENDLOOP.
+              WHEN 'R05'. "Corporate Debenture + B/E + SoE(NG)
+                LOOP AT i_summary INTO w_summary WHERE portfolio = lv_portfolio AND
+                                                       valuation_class = '0001' AND
+                                                       ind_sector <> '401010' AND
+                                                       ( gsart = 'BNF' OR
+                                                         gsart = 'BNV' OR
+                                                         gsart = 'BNS' OR
+                                                         gsart = 'BEX' OR
+                                                         gsart = 'ZCB' ).
+                  <fs_amt> = <fs_amt> + w_summary-market_pc + w_summary-acc_interest_pc.
+                ENDLOOP.
+              WHEN 'R06'. "AIGFT + SICCO
+
+              WHEN 'R07'. "TSFC
+
+              WHEN 'R08'. "Common Stock + Warrant
+                LOOP AT i_summary INTO w_summary WHERE portfolio = lv_portfolio AND
+                                                       ( gsart = 'SHA' OR
+                                                         gsart = 'SRT' OR
+                                                         gsart = 'WRE' ).
+                  <fs_amt> = <fs_amt> + w_summary-market_pc.
+                ENDLOOP.
+              WHEN 'R09'. "Unit Trust
+                LOOP AT i_summary INTO w_summary WHERE portfolio = lv_portfolio AND
+                                                           gsart = 'MFN'.
+                  <fs_amt> = <fs_amt> + w_summary-market_pc.
+                ENDLOOP.
+              WHEN 'R10'. "Others
+
+              WHEN 'R11'. "Adjustment
+
+            ENDCASE.
+          ENDIF.
+        ELSEIF w_component-name CS 'PCT'.
+          ASSIGN COMPONENT w_component-name OF STRUCTURE <fs_dataline> TO <fs_pct>.
+          IF <fs> IS ASSIGNED.
+            IF w_desc-typ+0(1) EQ 'R'.
+*** Start of EL38879 ***
+*              READ TABLE i_summary_port INTO w_summary_port WITH KEY portfolio = lv_portfolio.
+              CLEAR w_nav.
+              READ TABLE i_nav INTO w_nav WITH KEY portfolio = lv_portfolio.
+*** End   of EL38879 ***
+              IF sy-subrc EQ 0.
+*** Start of EL38879 ***
+*                lv_total_nav = w_summary_port-market_pc + w_summary_port-acc_interest_pc.
+                lv_total_nav = w_nav-nav.
+*** End   of EL38879 ***
+                <fs_pct> = ( <fs_amt> / lv_total_nav ) * 100.
+                w_percent-portfolio = lv_portfolio.
+                w_percent-percent = <fs_pct>.
+                COLLECT w_percent INTO i_percent.
+              ENDIF.
+            ENDIF.
+          ENDIF.
+        ENDIF.
+
+      ENDLOOP.
+    ELSEIF w_desc-typ+0(1) EQ 'F'.
+      LOOP AT i_component INTO w_component.
+        IF w_component-name NE 'DESC' AND w_component-name NE 'TYP'.
+          lv_portfolio = w_component-name.
+          SHIFT lv_portfolio LEFT BY 4 PLACES.
+        ENDIF.
+
+        ASSIGN COMPONENT w_component-name OF STRUCTURE <fs_dataline> TO <fs>.
+        IF w_component-name EQ 'TYP'.
+          IF <fs> IS ASSIGNED.
+            <fs> = w_desc-typ.
+            UNASSIGN <fs>.
+          ENDIF.
+        ELSEIF w_component-name EQ 'DESC'.
+          IF <fs> IS ASSIGNED.
+            <fs> = w_desc-desc.
+            UNASSIGN <fs>.
+          ENDIF.
+        ELSEIF w_component-name CS 'PCT'.
+          ASSIGN COMPONENT w_component-name OF STRUCTURE <fs_dataline> TO <fs_pct>.
+          IF <fs> IS ASSIGNED.
+            CASE w_desc-typ.
+              WHEN 'F01'. "Total
+                READ TABLE i_percent INTO w_percent WITH KEY portfolio = lv_portfolio.
+                IF sy-subrc EQ 0.
+                  <fs_pct> = w_percent-percent.
+                ENDIF.
+              WHEN 'F02'. "NAV per Unit
+                READ TABLE i_nav INTO w_nav WITH KEY portfolio = lv_portfolio.
+                IF sy-subrc EQ 0.
+                  IF w_nav-units IS NOT INITIAL.
+                    <fs_pct> = w_nav-nav / w_nav-units.
+                  ELSE.
+                    READ TABLE i_units INTO w_units INDEX 1.
+                    IF sy-subrc EQ 0.
+                      IF w_units-units IS NOT INITIAL.
+                        <fs_pct> = w_nav-nav / w_units-units.
+                      ENDIF.
+                    ENDIF.
+                  ENDIF.
+                ENDIF.
+              WHEN 'F03'. "Total NAV
+*** Start of EL38879 ***
+*                READ TABLE i_summary_port INTO w_summary_port WITH KEY portfolio = lv_portfolio.
+*                IF sy-subrc EQ 0.
+*                  <fs_pct> = w_summary_port-market_pc + w_summary_port-acc_interest_pc.
+*                ENDIF.
+                CLEAR w_nav.
+                READ TABLE i_nav INTO w_nav WITH KEY portfolio = lv_portfolio.
+                IF sy-subrc EQ 0.
+                  <fs_pct> = w_nav-nav.
+                ENDIF.
+*** End of EL38879 ***
+              WHEN OTHERS.
+
+            ENDCASE.
+
+          ENDIF.
+        ENDIF.
+
+      ENDLOOP.
+    ENDIF.
+    APPEND <fs_dataline> TO <fs_data>.
+    CLEAR: <fs_dataline>.
+
+  ENDLOOP.
+
+  LOOP AT <fs_data> ASSIGNING <fs_dataline>.
+
+  ENDLOOP.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*  FORM BUILD_TYPE                                                     *
+*&---------------------------------------------------------------------*
+FORM build_type.
+  CLEAR w_desc.
+  w_desc-typ  = 'R01'.
+  w_desc-desc = 'Saving (Investment A/C) + P/N Call'.
+  APPEND w_desc TO i_desc.
+  CLEAR w_desc.
+  w_desc-typ  = 'R02'.
+  w_desc-desc = 'Bank Time Deposit'.
+  APPEND w_desc TO i_desc.
+  CLEAR w_desc.
+  w_desc-typ  = 'R03'.
+  w_desc-desc = 'Bank Debenture and B/E'.
+  APPEND w_desc TO i_desc.
+  CLEAR w_desc.
+  w_desc-typ  = 'R04'.
+  w_desc-desc = 'Government Bond + TBill + CB + BOT + SoE(G)'.
+  APPEND w_desc TO i_desc.
+  CLEAR w_desc.
+  w_desc-typ  = 'R05'.
+  w_desc-desc = 'Corporate Debenture + B/E + SoE(NG)'.
+  APPEND w_desc TO i_desc.
+*  CLEAR w_desc.
+*  w_desc-typ  = 'R06'.
+*  w_desc-desc = 'AIGFT + SICCO'.
+*  APPEND w_desc TO i_desc.
+*  CLEAR w_desc.
+*  w_desc-typ  = 'R07'.
+*  w_desc-desc = 'TSFC'.
+*  APPEND w_desc TO i_desc.
+  CLEAR w_desc.
+  w_desc-typ  = 'R08'.
+  w_desc-desc = 'Common Stock + Warrant'.
+  APPEND w_desc TO i_desc.
+  CLEAR w_desc.
+  w_desc-typ  = 'R09'.
+  w_desc-desc = 'Unit Trust'.
+  APPEND w_desc TO i_desc.
+*  CLEAR w_desc.
+*  w_desc-typ  = 'R10'.
+*  w_desc-desc = 'Others'.
+*  APPEND w_desc TO i_desc.
+*  CLEAR w_desc.
+*  w_desc-typ  = 'R11'.
+*  w_desc-desc = 'Adjustment'.
+*  APPEND w_desc TO i_desc.
+  CLEAR w_desc.
+  w_desc-typ  = 'X00'.
+  w_desc-desc = SPACE.
+  APPEND w_desc TO i_desc.
+  CLEAR w_desc.
+  w_desc-typ  = 'F01'.
+  w_desc-desc = 'Total'.
+  APPEND w_desc TO i_desc.
+
+  CLEAR w_desc.
+  w_desc-typ  = 'F02'.
+  w_desc-desc = 'NAV per Unit'.
+  APPEND w_desc TO i_desc.
+  CLEAR w_desc.
+  w_desc-typ  = 'F03'.
+  w_desc-desc = 'Total NAV'.
+  APPEND w_desc TO i_desc.
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*  FORM CONSOLIDATE                                                    *
+*&---------------------------------------------------------------------*
+FORM consolidate.
+  IF i_positions[] IS NOT INITIAL.
+    LOOP AT i_positions INTO w_positions.
+      w_summary-bukrs = w_positions-bukrs.
+      w_summary_port-bukrs = w_positions-bukrs.
+      w_summary-valuation_class = w_positions-valuation_class.
+      w_summary-ind_sector = w_positions-ind_sector.
+
+      IF w_positions-portfolio IS INITIAL.
+        w_summary-portfolio = w_positions-portfolio_tm.
+      ELSE.
+        w_summary-portfolio = w_positions-portfolio.
+      ENDIF.
+      w_portfolio-portfolio = w_summary-portfolio.
+      w_summary_port-portfolio = w_summary-portfolio.
+      w_summary-gsart = w_positions-gsart.
+      w_summary-shwhr = w_positions-shwhr.
+      w_summary_port-shwhr = w_positions-shwhr.
+      w_summary-book_val_lc = w_positions-book_val_lc.
+      w_summary-market_pc = w_positions-market_pc.
+      w_summary-acc_interest_pc = w_positions-acc_interest_pc.
+      w_summary_port-book_val_lc = w_positions-book_val_lc.
+      w_summary_port-market_pc = w_positions-market_pc.
+      w_summary_port-acc_interest_pc = w_positions-acc_interest_pc.
+      IF w_positions-gsart EQ 'CAL' OR
+          w_positions-gsart EQ 'FDL' OR
+           w_positions-gsart EQ 'DLL'.
+        w_summary_port-market_pc = w_positions-aqu_val_pc.
+      ENDIF.
+      COLLECT w_summary INTO i_summary.
+      COLLECT w_summary_port INTO i_summary_port.
+      COLLECT w_portfolio INTO i_portfolio.
+    ENDLOOP.
+
+*    LOOP AT i_nav INTO w_nav.
+*      w_summary_port-bukrs = w_nav-bukrs.
+*      w_summary_port-portfolio = w_nav-portfolio.
+*      w_summary_port-shwhr = w_nav-waers.
+*      w_summary_port-book_val_lc = w_nav-cash.
+*      COLLECT w_summary_port INTO i_summary_port.
+*    ENDLOOP.
+  ENDIF.
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*  FORM SET_INIT                                                       *
+*&---------------------------------------------------------------------*
+FORM set_init.
+  p_sec = abap_true.
+  p_pos = abap_true.
+  p_loa = abap_false.
+  p_dea = abap_false.
+
+* control parameters
+  p_auswt = '01'. "Evaluation Type
+  p_shift = '0'.  "Market data shift rule
+  p_kursa = '05'. "Price Type for evaluation: 01 Spot
+  p_bilstb = '3'. "Remaining Term Based On: 3 Key Date
+  p_revflw = abap_false.
+  p_histkr = abap_false.
+  p_errlog = abap_false.
+  p_logsav = abap_false.
+  p_cdense = abap_false.
+  p_nonull = abap_true.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*  FORM MODIFY_SEL_SCREEN                                              *
+*&---------------------------------------------------------------------*
+FORM modify_sel_screen.
+  LOOP AT SCREEN.
+    IF screen-group2 = 'DBS'.     "hide ldb parameters
+      screen-active = '0'.
+      MODIFY SCREEN.
+    ENDIF.
+  ENDLOOP.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*  FORM LDB_PARAMS                                                     *
+*&---------------------------------------------------------------------*
+FORM ldb_params.
+  DATA: lt_dummy TYPE STANDARD TABLE OF string.
+  REFRESH: s_bukrs, s_vlarea, s_valcls, s_rportb, s_sanlf, s_gsart, s_partnr, s_posccy,
+           s_dats.
+
+  IF s_rpo-low IS NOT INITIAL.
+    LOOP AT s_rpo.
+      s_por-sign = 'I'.
+      s_por-option = 'EQ'.
+      s_por-low = s_rpo-low.
+      APPEND s_por.
+    ENDLOOP.
+  ENDIF.
+
+*Selections Parameters
+  PERFORM map_ldb_params TABLES lt_dummy lt_dummy USING 'P' 'X' p_sec.    "Securities
+  PERFORM map_ldb_params TABLES lt_dummy lt_dummy USING 'P' 'X' p_dea.    "OTC Transactions
+  PERFORM map_ldb_params TABLES lt_dummy lt_dummy USING 'P' SPACE p_loa.  "Loans
+  PERFORM map_ldb_params TABLES lt_dummy lt_dummy USING 'P' SPACE p_pos.  "Listed Derivatives
+  PERFORM map_ldb_params TABLES s_buk s_bukrs USING 'S' SPACE SPACE.      "Company Code
+  PERFORM map_ldb_params TABLES s_rpo s_rportb USING 'S' SPACE SPACE.     "Portfolio
+  PERFORM map_ldb_params TABLES s_dat s_dats USING 'S' SPACE SPACE.       "KeyDate
+  PERFORM map_ldb_params TABLES lt_dummy lt_dummy USING 'P' 'GICS' p_istype. "Industry Type
+  PERFORM map_ldb_params TABLES s_por s_porttm USING 'S' SPACE SPACE.     "Portfolio
+
+*Control Parameters
+  PERFORM map_ldb_params TABLES lt_dummy lt_dummy USING 'P' '01'  p_auswt.  "Evaluation Type
+  PERFORM map_ldb_params TABLES lt_dummy lt_dummy USING 'P' '0'   p_shift.  "Market data shift rule
+  PERFORM map_ldb_params TABLES lt_dummy lt_dummy USING 'P' '05'  p_kursa.  "Price Type for evaluation: 05 Closing
+  PERFORM map_ldb_params TABLES lt_dummy lt_dummy USING 'P' '3'   p_bilstb. "Remaining Term Based On: 3 Key Date
+
+  PERFORM map_ldb_params TABLES lt_dummy lt_dummy USING 'P' abap_false p_revflw. "Process Reversed Flows
+  PERFORM map_ldb_params TABLES lt_dummy lt_dummy USING 'P' abap_false p_histkr. "Historical Account Assign.Ref.
+  PERFORM map_ldb_params TABLES lt_dummy lt_dummy USING 'P' abap_false p_errlog. "Error Log Display
+  PERFORM map_ldb_params TABLES lt_dummy lt_dummy USING 'P' abap_false p_logsav. "Save Error Log
+  PERFORM map_ldb_params TABLES lt_dummy lt_dummy USING 'P' abap_false p_cdense. "Summarize Results
+  PERFORM map_ldb_params TABLES lt_dummy lt_dummy USING 'P' abap_true p_nonull.  "Hide Zero Records
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*  FORM MAP_LDB_PARAMS                                                 *
+*&---------------------------------------------------------------------*
+FORM map_ldb_params TABLES pi_sin pi_sout USING pi_type pi_pin pi_pout.
+  IF pi_type EQ 'S'.
+    IF pi_sin IS NOT INITIAL.
+      CLEAR pi_sout.
+      REFRESH pi_sout.
+      APPEND LINES OF pi_sin TO pi_sout.
+    ENDIF.
+  ELSEIF pi_type EQ 'P'.
+    CLEAR pi_pout.
+    pi_pout = pi_pin.
+  ENDIF.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*  FORM DISPLAY_ALV                                                    *
+*&---------------------------------------------------------------------*
+FORM display_alv.
+
+  CHECK i_summary IS NOT INITIAL.
+  SORT i_summary BY bukrs portfolio gsart.
+  TRY.
+      cl_salv_table=>factory(
+        IMPORTING
+          r_salv_table = o_table
+        CHANGING
+          t_table      = <fs_data> ). "i_summary ).
+    CATCH cx_salv_msg.                                  "#EC NO_HANDLER
+  ENDTRY.
+
+  o_functions = o_table->get_functions( ).
+  o_functions->set_all( abap_true ).
+  o_columns_tab = o_table->get_columns( ).
+  o_columns_tab->set_key_fixation( abap_true ).
+  o_columns_tab->set_optimize( abap_true ).
+  o_display = o_table->get_display_settings( ).
+
+  PERFORM build_header.
+  PERFORM build_fieldcatalog.
+  TRY.
+      o_table->display( ).
+    CATCH cx_salv_msg.                                  "#EC NO_HANDLER
+  ENDTRY.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*  FORM BUILD_HEADER                                                   *
+*&---------------------------------------------------------------------*
+FORM build_header.
+
+  DATA: lv_date(10) TYPE c,
+        lv_sdate TYPE string.
+
+  WRITE s_dat-low TO lv_date MM/DD/YYYY.
+  CONCATENATE 'As of Date' lv_date INTO lv_sdate SEPARATED BY SPACE.
+
+  CREATE OBJECT o_header.
+
+  o_label = o_header->create_label( row = 1 column = 1 ).
+  o_label->set_text( 'AIA Company Limited' ).
+  o_label = o_header->create_label( row = 2 column = 1 ).
+  o_label->set_text( 'Provident Fund' ).
+  o_label = o_header->create_label( row = 3 column = 1 ).
+  o_label->set_text( 'Asset Allocation Report' ).
+  o_label = o_header->create_label( row = 4 column = 1 ).
+  o_label->set_text( lv_sdate ).
+
+
+  o_table->set_top_of_list( o_header ).
+  o_table->set_top_of_list_print( o_header ).
+ENDFORM.
+*&---------------------------------------------------------------------*
+*  FORM BUILD_FIELDCATALOG                                             *
+*&---------------------------------------------------------------------*
+FORM build_fieldcatalog.
+  DATA: lv_amt TYPE string,
+        lv_pct TYPE string,
+        lv_mtxt TYPE scrtext_m,
+        lv_fieldname TYPE lvc_fname,
+        lv_portfolio TYPE string.
+
+  DATA: lv_long TYPE scrtext_l.
+  DATA: lv_date(10) TYPE c.
+
+  WRITE s_dat-low TO lv_date MM/DD/YYYY.
+  CONCATENATE 'Asset Allocation As of Date' lv_date INTO lv_long SEPARATED BY SPACE.
+
+  PERFORM set_column_text USING:
+     'DESC'      0     ' '   ' '      lv_long      60     SPACE 'X' SPACE.
+  PERFORM set_technical USING 'TYP'.
+  LOOP AT i_component INTO w_component.
+    IF w_component-name EQ 'DESC' OR w_component-name EQ 'TYP'.
+      CONTINUE.
+    ENDIF.
+
+    lv_portfolio = w_component-name.
+    SHIFT lv_portfolio LEFT BY 4 PLACES.
+
+    IF w_component-name+0(3) EQ 'AMT'.
+      CONCATENATE lv_portfolio 'Amount' INTO lv_mtxt SEPARATED BY SPACE.
+    ELSEIF w_component-name+0(3) EQ 'PCT'.
+      CONCATENATE lv_portfolio '%' INTO lv_mtxt SEPARATED BY SPACE.
+    ENDIF.
+    lv_fieldname = w_component-name.
+    PERFORM set_column_text USING:
+       lv_fieldname 0 SPACE lv_mtxt SPACE 60 SPACE SPACE SPACE.
+  ENDLOOP.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*  FORM SET_TECHNICAL                                                  *
+*&---------------------------------------------------------------------*
+FORM set_technical USING pi_fieldname TYPE lvc_fname.
+  TRY.
+      o_column ?= o_columns_tab->get_column( pi_fieldname ).
+      o_column->set_technical( abap_true ).
+    CATCH cx_salv_not_found.                        "#EC NO_HANDLER
+  ENDTRY.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*  FORM SET_COLUMN_TEXT                                                *
+*&---------------------------------------------------------------------*
+FORM set_column_text USING pi_fieldname TYPE lvc_fname
+                           pi_color TYPE lvc_col
+                           pi_short TYPE scrtext_s
+                           pi_medium TYPE scrtext_m
+                           pi_long TYPE scrtext_l
+                           pi_outlen TYPE lvc_outlen
+                           pi_noout TYPE c
+                           pi_key TYPE c
+                           pi_zero TYPE c.
+
+  DATA: ls_color TYPE lvc_s_colo.
+
+  TRY.
+      o_column ?= o_columns_tab->get_column( pi_fieldname ).
+      ls_color-col = pi_color.
+      o_column->set_color( ls_color ).
+      o_column->set_short_text( pi_short ).
+      o_column->set_medium_text( pi_medium ).
+      o_column->set_long_text( pi_long ).
+      o_column->set_output_length( pi_outlen ).
+      o_column->set_key( pi_key ).
+      o_column->set_zero( pi_zero ).
+      IF pi_noout EQ 'X'.
+        o_column->set_visible( abap_false ).
+      ENDIF.
+    CATCH cx_salv_not_found.                        "#EC NO_HANDLER
+  ENDTRY.
+ENDFORM.

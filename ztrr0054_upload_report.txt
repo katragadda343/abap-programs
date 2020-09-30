@@ -1,0 +1,1346 @@
+*&---------------------------------------------------------------------*
+* Program          : ZTRI0050
+* Created by       : Chua Yuan Wei (KSAP064)
+* Date             : 30 Jun 2017
+* Business Analyst : Dondapati, Koteswararao
+* Project	         : Project TH Pension & ILP
+* PIR/PCR          : 9000003082
+* Description      : Order Upload
+*&---------------------------------------------------------------------*
+*                         MODIFICATION HISTORY
+*&---------------------------------------------------------------------*
+* Changed by       : Erick Lee (KSAP082)
+* Search on        : EL39226
+* Date             : 23 Aug 2018
+* Business Analyst : Tong Keen Soon
+* Project	         : BAU
+* PIR/PCR          : 4000039226/6000004753
+* Description      : Remove house bank hardcode & use ZTR_ILP_BANK-HBKID
+*&---------------------------------------------------------------------*
+* Changed by       :
+* Search on        :
+* Date             :
+* Business Analyst :
+* Project	         :
+* PIR/PCR          :
+* Description      :
+*&---------------------------------------------------------------------*
+
+REPORT ZTRI0054.
+
+*&---------------------------------------------------------------------*
+*  TYPES                                                               *
+*&---------------------------------------------------------------------*
+TYPES: BEGIN OF t_upfile_contract,
+        bukrs         TYPE bukrs,
+        localticker   TYPE vvranlwxs,
+        ttype         TYPE string,
+        counterparty  TYPE string,
+        portfolio     TYPE rportb,
+        tradedate     TYPE string,
+        settledate    TYPE string,
+        nominalunit   TYPE string,
+        price         TYPE string,
+        pymtamount    TYPE string,
+        accrued_int   TYPE string,
+        ext_ref       TYPE tb_nordext,
+        int_ref       TYPE tb_nordext,
+        assignment    TYPE string,
+        rldepo        TYPE vrldepo,
+        inttradedate  TYPE sy-datum,
+        intsettledate TYPE sy-datum,
+        waers         TYPE waers,
+        ranl          TYPE vvranlw,
+        gsart         TYPE vvsart,
+        sanlf         TYPE sanlf,
+        snoti         TYPE snoti,
+        sfhaart       TYPE tb_sfhaart,
+        partner       TYPE tb_kunnr_new,
+        gvc           TYPE tpm_com_val_class,
+        rfha          TYPE tb_rfha,
+        comm          TYPE string,
+        vat           TYPE string,
+        wht           TYPE string,
+        error         TYPE c,
+        message       TYPE string,
+        status        TYPE c,
+       END OF t_upfile_contract.
+
+TYPES: BEGIN OF t_mapping,
+        partner    TYPE bu_partner,
+        setvalue   TYPE zzsetvalue,
+        commission TYPE zzcommission,
+        vat        TYPE zzvat,
+        wht        TYPE zzwht,
+       END OF t_mapping.
+
+TYPES: BEGIN OF t_excel,
+        line(50000) TYPE c,
+       END OF t_excel.
+
+TYPES: ty_excel      TYPE t_excel OCCURS 0,
+       ty_intern     TYPE zalsmex_tabline   OCCURS 0,
+       ty_internval  TYPE zalsmex_tabline-value.
+
+DATA: i_rawfile     TYPE STANDARD TABLE OF zalsmex_tabline,
+      w_rawfile     TYPE zalsmex_tabline.
+
+DATA: application TYPE ole2_object,
+      workbook    TYPE ole2_object,
+      sheet       TYPE ole2_object,
+      cells       TYPE ole2_object,
+      cell1       TYPE ole2_object,
+      cell2       TYPE ole2_object,
+      range       TYPE ole2_object,
+      font        TYPE ole2_object,
+      column      TYPE ole2_object,
+      shading     TYPE ole2_object,
+      border      TYPE ole2_object.
+
+DATA: i_upfile_contract TYPE STANDARD TABLE OF t_upfile_contract,
+      w_upfile_contract TYPE t_upfile_contract,
+      i_mapping TYPE STANDARD TABLE OF t_mapping,
+      w_mapping TYPE t_mapping.
+
+CONSTANTS: c_green   TYPE c VALUE '3',
+           c_red     TYPE c VALUE '1',
+           c_yellow  TYPE c VALUE '2',
+           c_x       TYPE c       VALUE 'X',
+           c_quot_unit TYPE snoti VALUE '2',
+           c_quot_prct TYPE snoti VALUE '1',
+           c_inclusive         TYPE tb_sincl_char VALUE '1',
+           c_exclusive         TYPE tb_sincl_char VALUE '0',
+           c_title   TYPE lvc_title VALUE 'FAM Contract Upload',
+           c_title_test   TYPE lvc_title VALUE 'TEST RUN: FAM Contract Upload'.
+*&---------------------------------------------------------------------*
+*  ALV                                                                 *
+*&---------------------------------------------------------------------*
+DATA: o_table               TYPE REF TO cl_salv_table,
+      o_column              TYPE REF TO cl_salv_column_table,
+      o_columns_tab         TYPE REF TO cl_salv_columns_table,
+      o_display             TYPE REF TO cl_salv_display_settings,
+      o_functions           TYPE REF TO cl_salv_functions.
+
+*&---------------------------------------------------------------------*
+*  FIELD-SYMBOLDS                                                      *
+*&---------------------------------------------------------------------*
+FIELD-SYMBOLS: <fs_field> TYPE any.
+
+*&---------------------------------------------------------------------*
+*  SELECTION-SCREEN                                                    *
+*&---------------------------------------------------------------------*
+SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE text-s01.
+PARAMETERS: p_file   TYPE rlgrap-filename DEFAULT 'C:\' OBLIGATORY.
+SELECTION-SCREEN END   OF BLOCK b1.
+
+SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME TITLE text-s02.
+PARAMETERS: p_pass TYPE char10 NO-DISPLAY.
+SELECTION-SCREEN END   OF BLOCK b2.
+PARAMETERS: p_test   AS CHECKBOX DEFAULT 'X'.
+*&---------------------------------------------------------------------*
+*  AT SELECTION-SCREEN ON VALUE-REQUEST FOR                            *
+*&---------------------------------------------------------------------*
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_file.
+  PERFORM get_dir_file USING p_file.
+
+*&---------------------------------------------------------------------*
+*  AT SELECTION-SCREEN OUTPUT                                          *
+*&---------------------------------------------------------------------*
+AT SELECTION-SCREEN OUTPUT.
+  LOOP AT SCREEN.
+    IF screen-name = 'P_PASS'.
+      screen-invisible = 1.
+    ENDIF.
+
+    MODIFY SCREEN.
+  ENDLOOP.
+
+*&---------------------------------------------------------------------*
+*  START-OF-SELECTION                                                  *
+*&---------------------------------------------------------------------*
+START-OF-SELECTION.
+  PERFORM upload_file.
+  PERFORM get_mapping.
+  PERFORM validate_contract.
+  PERFORM calculate_fee.
+  PERFORM create_security USING p_test.
+  PERFORM display_alv.
+
+*&---------------------------------------------------------------------*
+*  FORM CALCULATE_FEE                                                  *
+*&---------------------------------------------------------------------*
+FORM calculate_fee.
+
+  DATA: lv_commission TYPE tpm_amount,
+        lv_vat        TYPE tpm_amount,
+        lv_wht        TYPE tpm_amount,
+        lv_final_comm TYPE tpm_amount.
+
+  DATA: lv_ind TYPE sy-tabix.
+
+  LOOP AT i_upfile_contract INTO w_upfile_contract WHERE error EQ SPACE
+                                               AND snoti EQ '2'.
+    lv_ind = sy-tabix.
+    READ TABLE i_mapping INTO w_mapping WITH KEY partner = w_upfile_contract-partner.
+    IF sy-subrc EQ 0.
+    "Commission
+      IF w_upfile_contract-pymtamount IS NOT INITIAL.
+        lv_commission = w_upfile_contract-pymtamount * ( w_mapping-commission / 100 ).
+        lv_vat        = lv_commission * ( w_mapping-vat / 100 ).
+        lv_wht        = lv_commission * ( w_mapping-wht / 100 ).
+        lv_final_comm = lv_commission + lv_vat.
+
+        w_upfile_contract-comm = lv_final_comm.
+        w_upfile_contract-vat  = lv_vat.
+        w_upfile_contract-wht  = lv_wht.
+        MODIFY i_upfile_contract FROM w_upfile_contract INDEX lv_ind.
+      ENDIF.
+    ENDIF.
+
+  ENDLOOP.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*  FORM DISPLAY_ALV                                                    *
+*&---------------------------------------------------------------------*
+FORM display_alv.
+  CHECK i_upfile_contract IS NOT INITIAL.
+
+  TRY.
+      cl_salv_table=>factory(
+        IMPORTING
+          r_salv_table = o_table
+        CHANGING
+          t_table      = i_upfile_contract ).
+    CATCH cx_salv_msg.                                  "#EC NO_HANDLER
+  ENDTRY.
+
+  o_columns_tab = o_table->get_columns( ).
+  o_columns_tab->set_optimize( abap_true ).
+  o_display = o_table->get_display_settings( ).
+  o_functions = o_table->get_functions( ).
+  o_functions->set_all( abap_true ).
+  TRY.
+      o_columns_tab->set_exception_column( value = 'STATUS' ).
+    CATCH cx_salv_data_error.                           "#EC NO_HANDLER
+  ENDTRY.
+
+  IF p_test EQ 'X'.
+    o_display->set_list_header( c_title_test ).
+  ELSE.
+    o_display->set_list_header( c_title ).
+  ENDIF.
+
+  PERFORM build_fieldcatalog.
+  TRY.
+      o_table->display( ).
+    CATCH cx_salv_msg.                                  "#EC NO_HANDLER
+  ENDTRY.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*  FORM CREATE_SECURITY                                                *
+*&---------------------------------------------------------------------*
+FORM create_security USING lp_test TYPE char1.
+DATA: lw_security               TYPE bapi_ftr_create_security,
+      lw_gencondata             TYPE bapi_ftr_create,
+      lw_companycodein          TYPE bapi2042-company_code,
+      lw_financialtransactionin TYPE bapi2042-transaction,
+      lw_addflow                TYPE bapi_ftr_addflow_create,
+      lw_chgflow                TYPE bapi_ftr_addflow_change,
+      lw_chgflowx               TYPE bapi_ftr_addflow_changex,
+      li_return                 TYPE STANDARD TABLE OF bapiret2,
+      lv_error                  TYPE char1,
+      lv_message                TYPE string,
+      li_additionalflows        TYPE TABLE OF  bapi_ftr_addflow_detail,
+      lw_additionalflows        TYPE bapi_ftr_addflow_detail,
+      li_pay                    TYPE STANDARD TABLE OF bapi_ftr_paydet_detail,
+      lw_pay                    TYPE bapi_ftr_paydet_detail,
+      lw_paymentdetail          TYPE bapi_ftr_paydet_change,
+      lw_paymentdetailx         TYPE bapi_ftr_paydet_changex,
+      lv_hktid                  TYPE hktid,
+      lv_hbkid                  TYPE hbkid, "+++ EL39226
+      lv_bkvid                  TYPE bu_bkvid.
+
+  LOOP AT i_upfile_contract INTO w_upfile_contract WHERE error IS INITIAL.
+    CLEAR lv_error.
+    CLEAR lw_security.
+    lw_security-security_id = w_upfile_contract-ranl.
+    lw_security-security_account = w_upfile_contract-rldepo.
+    lw_security-position_value_date = w_upfile_contract-inttradedate.
+    lw_security-calculate_date = w_upfile_contract-intsettledate.
+
+    "Unit Quoted Security
+    IF w_upfile_contract-snoti = c_quot_unit. "2
+      lw_security-price = w_upfile_contract-price.
+      lw_security-number_units      = w_upfile_contract-nominalunit.
+    "Percentage Quoted Security
+    ELSEIF w_upfile_contract-snoti = c_quot_prct. "1
+      lw_security-price = w_upfile_contract-price.
+      lw_security-nominal_amount      = w_upfile_contract-nominalunit.
+    ENDIF.
+
+    lw_security-payment_currency = w_upfile_contract-waers.
+    lw_security-payment_currency_iso = w_upfile_contract-waers.
+    lw_security-payment_date = w_upfile_contract-intsettledate.
+    lw_security-payment_amount = w_upfile_contract-pymtamount.
+
+    lw_security-inclusive_indicator = c_exclusive.
+
+    lw_gencondata-company_code = w_upfile_contract-bukrs.
+    lw_gencondata-product_type = w_upfile_contract-gsart.
+    lw_gencondata-transaction_type = w_upfile_contract-sfhaart.
+    lw_gencondata-external_reference = w_upfile_contract-ext_ref.
+    lw_gencondata-internal_reference = w_upfile_contract-int_ref.
+    lw_gencondata-assignment = w_upfile_contract-assignment.
+    lw_gencondata-partner = w_upfile_contract-partner.
+    lw_gencondata-contract_date = w_upfile_contract-inttradedate.
+    lw_gencondata-portfolio = w_upfile_contract-portfolio.
+    lw_gencondata-valuation_class = w_upfile_contract-gvc.
+
+    REFRESH li_return.
+* Create Security Transaction
+    SET UPDATE TASK LOCAL.
+    CALL FUNCTION 'BAPI_FTR_SECURITY_CREATE'
+      EXPORTING
+        security             = lw_security
+        generalcontractdata  = lw_gencondata
+        testrun              = lp_test
+      IMPORTING
+        financialtransaction = lw_financialtransactionin
+        companycode          = lw_companycodein
+      TABLES
+        return               = li_return.
+
+
+      PERFORM check_bapierr USING li_return CHANGING w_upfile_contract lv_error.
+
+      IF lv_error IS INITIAL.
+        CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+          EXPORTING
+            wait = 'X'.
+        w_upfile_contract-rfha = lw_financialtransactionin.
+        IF lp_test IS INITIAL. "for real run only
+*         create additional flows (if any)
+          REFRESH: li_return.
+          CLEAR lv_error.
+
+*         get payment detail list
+          IF lv_error <> 'X'.
+            IF w_upfile_contract-snoti = c_quot_unit. "2
+              IF ( w_upfile_contract-comm NE SPACE ) OR
+                    ( w_upfile_contract-wht NE SPACE ).
+                 CLEAR lw_addflow.
+                 IF w_upfile_contract-ttype = 'Buy'.
+                    lw_addflow-flow_type        = '0302'.
+                    lw_addflow-flow_sign        = '-'.
+                    lw_addflow-payment_amount   = w_upfile_contract-comm.
+                 ELSEIF w_upfile_contract-ttype = 'Sell'.
+                    lw_addflow-flow_type        = 'ZS04'.
+                    lw_addflow-flow_sign        = '-'.
+                    lw_addflow-payment_amount   = w_upfile_contract-comm.
+                 ENDIF.
+              ENDIF.
+
+              PERFORM add_other_flows USING lp_test lw_companycodein lw_financialtransactionin lw_addflow
+                                      CHANGING lv_error li_return.
+
+              PERFORM check_bapierr USING li_return CHANGING w_upfile_contract lv_error.
+
+              IF lv_error IS INITIAL.
+                CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+                  EXPORTING
+                    wait = 'X'.
+              ENDIF.
+
+              IF w_upfile_contract-wht IS NOT INITIAL.
+                IF w_upfile_contract-ttype = 'Buy'.
+                  lw_addflow-flow_type        = 'ZS24'.
+                  lw_addflow-flow_sign        = '+'.
+                  lw_addflow-payment_amount   = w_upfile_contract-wht.
+                ELSEIF w_upfile_contract-ttype = 'Sell'.
+                  lw_addflow-flow_type        = 'ZS25'.
+                  lw_addflow-flow_sign        = '+'.
+                  lw_addflow-payment_amount   = w_upfile_contract-wht.
+                ENDIF.
+              ENDIF.
+
+              PERFORM add_other_flows USING lp_test lw_companycodein lw_financialtransactionin lw_addflow
+                                      CHANGING lv_error li_return.
+
+              PERFORM check_bapierr USING li_return CHANGING w_upfile_contract lv_error.
+
+              IF lv_error IS INITIAL.
+                CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+                  EXPORTING
+                    wait = 'X'.
+              ENDIF.
+
+            ELSE.
+                IF w_upfile_contract-accrued_int IS NOT INITIAL.
+                  CLEAR: li_additionalflows,
+                         li_return.
+                  CALL FUNCTION 'BAPI_FTR_ADDFLOW_GETLIST'
+                    EXPORTING
+                      companycodein          = lw_companycodein
+                      financialtransactionin = lw_financialtransactionin
+                    TABLES
+                      additionalflows        = li_additionalflows
+                      return                 = li_return.
+                  READ TABLE li_additionalflows INTO lw_additionalflows WITH KEY flow_type = '0870'.
+                  IF sy-subrc = 0.
+                    CLEAR: lw_chgflow, lw_chgflowx.
+
+                    lw_chgflow-payment_amount   = w_upfile_contract-accrued_int.
+                    lw_chgflowx-payment_amount  = abap_true.
+                    PERFORM chg_other_flows USING lp_test lw_companycodein lw_financialtransactionin
+                                                  lw_additionalflows-flow_key lw_chgflow lw_chgflowx
+                                            CHANGING lv_error li_return.
+                    PERFORM check_bapierr USING li_return CHANGING w_upfile_contract lv_error.
+
+                    IF lv_error IS INITIAL.
+                      CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+                        EXPORTING
+                          wait = 'X'.
+                    ENDIF.
+                  ENDIF.
+
+                ENDIF.
+            ENDIF.
+            "Perform update Payment Detail.
+            CLEAR: li_pay,
+                   li_pay.
+            CALL FUNCTION 'BAPI_FTR_PAYDET_GETLIST'
+              EXPORTING
+                companycodein          = lw_companycodein
+                financialtransactionin = lw_financialtransactionin
+              TABLES
+                paymentdetails         = li_pay
+                return                 = li_return.
+            IF li_pay[] IS NOT INITIAL.
+              READ TABLE li_pay INTO lw_pay WITH KEY direction = '+'.
+              IF sy-subrc EQ 0.
+                CLEAR: lw_paymentdetail, lw_paymentdetailx,
+                       lv_hbkid,           "+++ EL39226
+                       lv_hktid, lv_bkvid.
+***** Begin of EL39226 *****
+*                SELECT SINGLE hktid INTO lv_hktid FROM ztr_ilp_bank
+                SELECT SINGLE hbkid hktid INTO (lv_hbkid, lv_hktid) FROM ztr_ilp_bank
+***** End of EL39226 *****
+                  WHERE bukrs = w_upfile_contract-bukrs
+                    AND portfolio = w_upfile_contract-portfolio.
+                IF sy-subrc EQ 0.
+                  lw_paymentdetail-account_id = lv_hktid.
+                ENDIF.
+
+                SELECT SINGLE bkvid INTO lv_bkvid FROM but0bk
+                  WHERE partner = w_upfile_contract-partner.
+                IF sy-subrc EQ 0.
+                  lw_paymentdetail-partner_bank = lv_bkvid.
+                ENDIF.
+***** Begin of EL39226 *****
+*                lw_paymentdetail-house_bank = 'CITTH'.
+                lw_paymentdetail-house_bank = lv_hbkid.
+***** End of EL39226 *****
+                lw_paymentdetail-payment_request = 'X'.
+
+                READ TABLE i_mapping INTO w_mapping WITH KEY setvalue = w_upfile_contract-counterparty.
+                IF sy-subrc EQ 0.
+                  lw_paymentdetail-payer = w_mapping-partner.
+                ENDIF.
+
+                lw_paymentdetail-considered_paymnt_meth = '12'.
+                lw_paymentdetail-det_group_definition = '8'.
+
+                lw_paymentdetailx-account_id = 'X'.
+                lw_paymentdetailx-partner_bank = 'X'.
+                lw_paymentdetailx-house_bank = 'X'.
+                lw_paymentdetailx-payment_request = 'X'.
+                lw_paymentdetailx-payer = 'X'.
+                lw_paymentdetailx-considered_paymnt_meth = 'X'.
+                lw_paymentdetailx-det_group_definition = 'X'.
+
+                PERFORM chg_paydet_flows USING lp_test lw_companycodein lw_financialtransactionin
+                                               lw_pay-direction lw_pay-payment_currency
+                                               lw_paymentdetail lw_paymentdetailx
+                                        CHANGING lv_error li_return.
+                PERFORM check_bapierr USING li_return CHANGING w_upfile_contract lv_error.
+
+                IF lv_error IS INITIAL.
+                  CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+                    EXPORTING
+                      wait = 'X'.
+                ENDIF.
+            ENDIF.
+
+              READ TABLE li_pay INTO lw_pay WITH KEY direction = '-'.
+              IF sy-subrc EQ 0.
+                CLEAR: lw_paymentdetail, lw_paymentdetailx,
+                       lv_hbkid,           "+++ EL39226
+                       lv_hktid, lv_bkvid.
+***** Begin of EL39226 *****
+*                SELECT SINGLE hktid INTO lv_hktid FROM ztr_ilp_bank
+                SELECT SINGLE hbkid hktid INTO (lv_hbkid, lv_hktid) FROM ztr_ilp_bank
+***** End of EL39226 *****
+                  WHERE bukrs = w_upfile_contract-bukrs
+                    AND portfolio = w_upfile_contract-portfolio.
+                IF sy-subrc EQ 0.
+                  lw_paymentdetail-account_id = lv_hktid.
+                ENDIF.
+***** Begin of EL39226 *****
+*                lw_paymentdetail-house_bank = 'CITTH'.
+                lw_paymentdetail-house_bank = lv_hbkid.
+***** End of EL39226 *****
+                lw_paymentdetail-payment_request = 'X'.
+
+                SELECT SINGLE bkvid INTO lv_bkvid FROM but0bk
+                  WHERE partner = w_upfile_contract-partner.
+                IF sy-subrc EQ 0.
+                  lw_paymentdetail-partner_bank = lv_bkvid.
+                ENDIF.
+
+                READ TABLE i_mapping INTO w_mapping WITH KEY setvalue = w_upfile_contract-counterparty.
+                IF sy-subrc EQ 0.
+                  lw_paymentdetail-payer = w_mapping-partner.
+                ENDIF.
+
+                lw_paymentdetail-considered_paymnt_meth = '12'.
+                lw_paymentdetail-det_group_definition = '8'.
+
+                lw_paymentdetailx-account_id = 'X'.
+                lw_paymentdetailx-partner_bank = 'X'.
+                lw_paymentdetailx-house_bank = 'X'.
+                lw_paymentdetailx-payment_request = 'X'.
+                lw_paymentdetailx-payer = 'X'.
+                lw_paymentdetailx-considered_paymnt_meth = 'X'.
+                lw_paymentdetailx-det_group_definition = 'X'.
+
+                PERFORM chg_paydet_flows USING lp_test lw_companycodein lw_financialtransactionin
+                                               lw_pay-direction lw_pay-payment_currency
+                                               lw_paymentdetail lw_paymentdetailx
+                                        CHANGING lv_error li_return.
+                PERFORM check_bapierr USING li_return CHANGING w_upfile_contract lv_error.
+
+                IF lv_error IS INITIAL.
+                  CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+                    EXPORTING
+                      wait = 'X'.
+                ENDIF.
+            ENDIF.
+            ENDIF.
+           ENDIF.
+        ENDIF.
+      ENDIF.
+
+      IF lv_error = 'X'.
+        IF w_upfile_contract-rfha IS NOT INITIAL.
+          CLEAR lv_message.
+          lv_message = 'Transaction created but payment details and/or other flow failed'.
+          PERFORM update_contract_error USING lv_message CHANGING w_upfile_contract.
+        ENDIF.
+      ELSE.
+        IF lp_test IS INITIAL AND w_upfile_contract-rfha IS NOT INITIAL.
+          MESSAGE i100(fwtr) WITH w_upfile_contract-rfha INTO w_upfile_contract-message.
+        ELSE.
+          w_upfile_contract-message = 'TEST RUN: record is valid'.
+        ENDIF.
+
+      ENDIF.
+
+
+      MODIFY i_upfile_contract FROM w_upfile_contract.
+  ENDLOOP.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*  FORM ADD_OTHER_FLOWS                                                *
+*&---------------------------------------------------------------------*
+FORM add_other_flows USING VALUE(lp_test) TYPE c
+                           VALUE(lp_companycodein) TYPE bapi2042-company_code
+                           VALUE(lp_financialtransactionin) TYPE bapi2042-transaction
+                           VALUE(lp_addflow) TYPE bapi_ftr_addflow_create
+                     CHANGING lp_error TYPE c
+                              lp_return TYPE bapiret2_t.
+  SET UPDATE TASK LOCAL.
+  CALL FUNCTION 'BAPI_FTR_ADDFLOW_CREATE'
+    EXPORTING
+      companycodein          = lp_companycodein
+      financialtransactionin = lp_financialtransactionin
+      additionalflow         = lp_addflow
+      testrun                = lp_test
+    TABLES
+      return                 = lp_return.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*  FORM CHG_OTHER_FLOWS                                                *
+*&---------------------------------------------------------------------*
+FORM chg_other_flows USING VALUE(lp_test) TYPE c
+                           VALUE(lp_companycodein) TYPE bapi2042-company_code
+                           VALUE(lp_financialtransactionin) TYPE bapi2042-transaction
+                           VALUE(lp_flowkey) TYPE bapi_ftr_addflow_detail-flow_key
+                           VALUE(lp_chgflow) TYPE bapi_ftr_addflow_change
+                           VALUE(lp_chgflowx) TYPE bapi_ftr_addflow_changex
+                     CHANGING lp_error TYPE c
+                              lp_return TYPE bapiret2_t.
+  SET UPDATE TASK LOCAL.
+  CALL FUNCTION 'BAPI_FTR_ADDFLOW_CHANGE'
+    EXPORTING
+      companycode          = lp_companycodein
+      financialtransaction = lp_financialtransactionin
+      flowkey                = lp_flowkey
+      additionalflow         = lp_chgflow
+      additionalflowx        = lp_chgflowx
+      testrun                = lp_test
+    TABLES
+      return                 = lp_return.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*  FORM CHG_PAYDET_FLOWS                                                *
+*&---------------------------------------------------------------------*
+FORM chg_paydet_flows USING VALUE(lp_test) TYPE c
+                            VALUE(lp_companycodein) TYPE bapi2042-company_code
+                            VALUE(lp_financialtransactionin) TYPE bapi2042-transaction
+                            VALUE(lp_direction) TYPE bapi_ftr_paydet_detail-direction
+                            VALUE(lp_paymentcurrency) TYPE bapi_ftr_paydet_detail-payment_currency
+                            VALUE(lp_paydet) TYPE bapi_ftr_paydet_change
+                            VALUE(lp_paydetx) TYPE bapi_ftr_paydet_changex
+                     CHANGING lp_error TYPE c
+                              lp_return TYPE bapiret2_t.
+  DATA: lv_dummyd          TYPE tb_dzverb.
+  SET UPDATE TASK LOCAL.
+  CALL FUNCTION 'BAPI_FTR_PAYDET_CHANGE'
+    EXPORTING
+      companycode          = lp_companycodein
+      financialtransaction = lp_financialtransactionin
+      direction            = lp_direction
+      paymentcurrency      = lp_paymentcurrency
+      effectivedate        = lv_dummyd
+      flowtype             = ''
+      paymentdetail        = lp_paydet
+      paymentdetailx       = lp_paydetx
+      testrun              = lp_test
+    TABLES
+      return                 = lp_return.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*  FORM VALIDATE_CONTRACT                                              *
+*&---------------------------------------------------------------------*
+FORM check_bapierr USING pi_return TYPE bapiret2_t
+                       CHANGING p_upfile TYPE t_upfile_contract
+                                p_error TYPE c.
+  DATA: lw_msg TYPE bapi_msg,
+        lv_message TYPE string,
+        lw_warning_nodisp TYPE c LENGTH 1,
+        lw_return TYPE bapiret2.
+
+      LOOP AT pi_return INTO lw_return WHERE type = 'E' OR type = 'A'.
+        IF lw_msg IS INITIAL.
+          lw_msg = lw_return-message .
+          p_error = 'X'.
+        ELSE.
+          CONCATENATE lw_msg lw_return-message INTO lw_msg SEPARATED BY '. '.
+        ENDIF.
+
+*       Check if futher error description is required.
+        IF lw_return-id <> 'FTR0' OR lw_return-number <> '161'.
+          lw_warning_nodisp = 'X'.
+        ENDIF.
+      ENDLOOP.
+
+*     if required, put in more error message from warning message
+      IF lw_msg IS NOT INITIAL AND lw_warning_nodisp IS INITIAL.
+        LOOP AT pi_return INTO lw_return WHERE type = 'W'.
+          CONCATENATE lw_msg lw_return-message INTO lw_msg SEPARATED BY '. '.
+        ENDLOOP.
+      ENDIF.
+
+*     append to the log
+      IF lw_msg IS NOT INITIAL.
+        CLEAR lv_message.
+        lv_message = lw_msg.
+        PERFORM update_contract_error USING lv_message CHANGING p_upfile.
+      ENDIF.
+ENDFORM.
+*&---------------------------------------------------------------------*
+*  FORM VALIDATE_CONTRACT                                              *
+*&---------------------------------------------------------------------*
+FORM validate_contract.
+
+  DATA: lv_message  TYPE string,
+        lv_bukrs    TYPE bukrs,
+        lv_waers    TYPE waers,
+        lv_ranl     TYPE vvranlw,
+        lv_gsart    TYPE vvsart,
+        lv_sanlf    TYPE sanlf,
+        lv_snoti    TYPE snoti,
+        lv_date     TYPE sy-datum,
+        lv_day(2)   TYPE c,
+        lv_month(2) TYPE c,
+        lv_year(4)  TYPE c.
+
+  DATA: lv_flg_fgkz,
+        lv_par_rel.
+
+  LOOP AT i_upfile_contract INTO w_upfile_contract.
+    "Company Code
+    IF w_upfile_contract-bukrs IS INITIAL.
+      CLEAR lv_message.
+      lv_message = 'Company Code is Blank'.
+      PERFORM update_contract_error USING lv_message CHANGING w_upfile_contract.
+    ELSE.
+      SELECT SINGLE bukrs waers INTO ( lv_bukrs, lv_waers ) FROM t001 WHERE bukrs = w_upfile_contract-bukrs.
+      IF sy-subrc NE 0.
+        CONCATENATE 'Company Code' w_upfile_contract-bukrs 'does not exist'
+                    INTO lv_message SEPARATED BY space.
+        PERFORM update_contract_error USING lv_message CHANGING w_upfile_contract.
+      ELSE.
+        w_upfile_contract-waers = lv_waers.
+      ENDIF.
+    ENDIF.
+
+    "Local Ticker
+    IF w_upfile_contract-localticker IS INITIAL.
+      CLEAR lv_message.
+      lv_message = 'Local Ticker is Blank'.
+      PERFORM update_contract_error USING lv_message CHANGING w_upfile_contract.
+    ELSE.
+      SELECT SINGLE ranl INTO lv_ranl FROM twx2 WHERE vvranlwi = 8
+                                                  AND vvranlwx = w_upfile_contract-localticker.
+      IF sy-subrc EQ 0.
+        w_upfile_contract-ranl = lv_ranl.
+
+* Security ID
+        SELECT SINGLE gsart sanlf snoti
+          INTO ( lv_gsart, lv_sanlf, lv_snoti )
+          FROM vwpanla
+          WHERE ranl = lv_ranl.
+        IF sy-subrc EQ 0.
+          w_upfile_contract-gsart = lv_gsart.
+          w_upfile_contract-sanlf = lv_sanlf.
+          w_upfile_contract-snoti = lv_snoti.
+        ENDIF.
+
+* GVC
+        IF w_upfile_contract-gsart EQ 'BNF'.
+          SELECT SINGLE com_val_class INTO w_upfile_contract-gvc
+          FROM ztr_maya_gvc WHERE ranl = w_upfile_contract-ranl.
+          IF sy-subrc <> 0.
+            CLEAR lv_message.
+            lv_message = 'GVC not found in ZTR_MAYA_GVC'.
+            PERFORM update_contract_error USING lv_message CHANGING w_upfile_contract.
+          ENDIF.
+        ELSE.
+          SELECT SINGLE com_val_class INTO w_upfile_contract-gvc
+          FROM ztr_maya_gvc WHERE bukrs = w_upfile_contract-bukrs
+                              AND gsart = w_upfile_contract-gsart.
+          IF sy-subrc <> 0.
+            CLEAR lv_message.
+            lv_message = 'GVC not found in ZTR_MAYA_GVC'.
+            PERFORM update_contract_error USING lv_message CHANGING w_upfile_contract.
+          ENDIF.
+        ENDIF.
+
+      ELSE.
+        CLEAR lv_message.
+        lv_message = 'Local Ticker doesn''t exist in TWX2'.
+        PERFORM update_contract_error USING lv_message CHANGING w_upfile_contract.
+      ENDIF.
+    ENDIF.
+
+    "Transaction Type
+    IF w_upfile_contract-ttype IS INITIAL.
+      CLEAR lv_message.
+      lv_message = 'Transaction Type is Blank'.
+      PERFORM update_contract_error USING lv_message CHANGING w_upfile_contract.
+    ELSE.
+      IF w_upfile_contract-ttype NE 'Buy' AND
+          w_upfile_contract-ttype NE 'Sell'.
+          CLEAR lv_message.
+          lv_message = 'Please maintain Buy / Sell only'.
+          PERFORM update_contract_error USING lv_message CHANGING w_upfile_contract.
+      ELSE.
+        IF w_upfile_contract-ttype EQ 'Buy'.
+          w_upfile_contract-sfhaart = '100'.
+        ELSEIF w_upfile_contract-ttype EQ 'Sell'.
+          w_upfile_contract-sfhaart = '200'.
+        ENDIF.
+      ENDIF.
+    ENDIF.
+
+    "Counter Party
+    IF w_upfile_contract-counterparty IS INITIAL.
+      CLEAR lv_message.
+      lv_message = 'Counter Party is Blank'.
+      PERFORM update_contract_error USING lv_message CHANGING w_upfile_contract.
+    ELSE.
+        READ TABLE i_mapping INTO w_mapping WITH KEY setvalue = w_upfile_contract-counterparty.
+        IF sy-subrc NE 0.
+          CLEAR lv_message.
+          lv_message = 'No mapping between BP and SET'.
+          PERFORM update_contract_error USING lv_message CHANGING w_upfile_contract.
+        ELSE.
+          w_upfile_contract-partner = w_mapping-partner.
+
+          CALL FUNCTION 'CHECK_CONFIRMATION_PROCEDURE'
+             EXPORTING
+                fgobj     = 'ZGP'
+             IMPORTING
+                sfgaktiv  = lv_flg_fgkz
+             EXCEPTIONS
+                not_found = 1
+                OTHERS    = 2.
+          IF sy-subrc <> 0.
+            MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+                    WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+          ENDIF.
+          IF lv_flg_fgkz IS NOT INITIAL.
+            SELECT SINGLE par_rel FROM bp001 INTO lv_par_rel
+                                  WHERE partner = w_upfile_contract-partner.
+            IF sy-subrc = 0 AND NOT lv_par_rel IS INITIAL.
+              CLEAR lv_message.
+              MESSAGE e171(b0) WITH w_upfile_contract-partner INTO lv_message.
+              PERFORM update_contract_error USING lv_message CHANGING w_upfile_contract.
+            ENDIF.
+          ENDIF.
+
+        ENDIF.
+    ENDIF.
+
+    "Portfolio
+    IF w_upfile_contract-portfolio IS INITIAL.
+      CLEAR lv_message.
+      lv_message = 'Portfolio is Blank'.
+      PERFORM update_contract_error USING lv_message CHANGING w_upfile_contract.
+    ELSE.
+      CALL FUNCTION 'TB_PORTFOLIO_CHECK'
+        EXPORTING
+              companycode = w_upfile_contract-bukrs
+              portfolio   = w_upfile_contract-portfolio
+        EXCEPTIONS
+             PORTFOLIO   = 1
+             OTHERS      = 2.
+      IF sy-subrc NE 0.
+          CLEAR lv_message.
+          MESSAGE e011(ti) WITH w_upfile_contract-portfolio w_upfile_contract-bukrs INTO lv_message.
+          PERFORM update_contract_error USING lv_message CHANGING w_upfile_contract.
+      ELSE.
+         SELECT SINGLE rldepo INTO w_upfile_contract-rldepo
+                FROM twd01 WHERE rportb = w_upfile_contract-portfolio.
+      ENDIF.
+    ENDIF.
+
+    "Trade Date
+    IF w_upfile_contract-tradedate IS INITIAL.
+      CLEAR lv_message.
+      lv_message = 'Trade Date is Blank'.
+      PERFORM update_contract_error USING lv_message CHANGING w_upfile_contract.
+    ELSE.
+      CLEAR lv_date.
+
+      SPLIT w_upfile_contract-tradedate AT '/' INTO lv_month lv_day lv_year. "MM/DD/YYYY
+
+      CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+        EXPORTING
+          INPUT         = lv_day
+        IMPORTING
+          OUTPUT        = lv_day.
+
+      CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+        EXPORTING
+          INPUT         = lv_month
+        IMPORTING
+          OUTPUT        = lv_month.
+
+      CONCATENATE lv_year lv_month lv_day INTO lv_date.
+      CALL FUNCTION 'DATE_CHECK_PLAUSIBILITY'
+        EXPORTING
+          DATE                            = lv_date
+       EXCEPTIONS
+         PLAUSIBILITY_CHECK_FAILED       = 1
+         OTHERS                          = 2.
+      IF sy-subrc <> 0.
+          CLEAR lv_message.
+          MESSAGE e002(0s) WITH w_upfile_contract-tradedate INTO lv_message.
+          PERFORM update_contract_error USING lv_message CHANGING w_upfile_contract.
+      ELSE.
+        w_upfile_contract-inttradedate = lv_date.
+        CALL FUNCTION 'CONVERT_DATE_TO_EXTERNAL'
+           EXPORTING
+             DATE_INTERNAL                  = lv_date
+           IMPORTING
+             DATE_EXTERNAL                  = w_upfile_contract-tradedate
+           EXCEPTIONS
+             DATE_INTERNAL_IS_INVALID       = 1
+             OTHERS                         = 2.
+        IF SY-SUBRC <> 0.
+* Implement suitable error handling here
+        ENDIF.
+      ENDIF.
+    ENDIF.
+
+    "Settlement Date
+    IF w_upfile_contract-settledate IS INITIAL.
+      CLEAR lv_message.
+      lv_message = 'Settl.Date is Blank'.
+      PERFORM update_contract_error USING lv_message CHANGING w_upfile_contract.
+    ELSE.
+      CLEAR lv_date.
+
+      SPLIT w_upfile_contract-settledate AT '/' INTO lv_month lv_day lv_year. "MM/DD/YYYY
+
+      CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+        EXPORTING
+          INPUT         = lv_day
+        IMPORTING
+          OUTPUT        = lv_day.
+
+      CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+        EXPORTING
+          INPUT         = lv_month
+        IMPORTING
+          OUTPUT        = lv_month.
+
+      CONCATENATE lv_year lv_month lv_day INTO lv_date.
+      CALL FUNCTION 'DATE_CHECK_PLAUSIBILITY'
+        EXPORTING
+          DATE                            = lv_date
+       EXCEPTIONS
+         PLAUSIBILITY_CHECK_FAILED       = 1
+         OTHERS                          = 2.
+      IF sy-subrc <> 0.
+          CLEAR lv_message.
+          MESSAGE e002(0s) WITH w_upfile_contract-settledate INTO lv_message.
+          PERFORM update_contract_error USING lv_message CHANGING w_upfile_contract.
+      ELSE.
+        w_upfile_contract-intsettledate = lv_date.
+        CALL FUNCTION 'CONVERT_DATE_TO_EXTERNAL'
+           EXPORTING
+             DATE_INTERNAL                  = lv_date
+           IMPORTING
+             DATE_EXTERNAL                  = w_upfile_contract-settledate
+           EXCEPTIONS
+             DATE_INTERNAL_IS_INVALID       = 1
+             OTHERS                         = 2.
+        IF SY-SUBRC <> 0.
+* Implement suitable error handling here
+        ENDIF.
+      ENDIF.
+    ENDIF.
+
+    "Nominal/Units
+    IF w_upfile_contract-nominalunit IS INITIAL.
+      CLEAR lv_message.
+      lv_message = 'Nominal/Units is Blank'.
+      PERFORM update_contract_error USING lv_message CHANGING w_upfile_contract.
+    ELSE.
+      IF w_upfile_contract-nominalunit CA sy-abcde.
+        CLEAR lv_message.
+        lv_message = 'Nominal/Units is Invalid'.
+        PERFORM update_contract_error USING lv_message CHANGING w_upfile_contract.
+      ENDIF.
+    ENDIF.
+
+    "Price
+    IF w_upfile_contract-price IS INITIAL.
+      CLEAR lv_message.
+      lv_message = 'Price is Blank'.
+      PERFORM update_contract_error USING lv_message CHANGING w_upfile_contract.
+    ELSE.
+      IF w_upfile_contract-price CA sy-abcde.
+        CLEAR lv_message.
+        lv_message = 'Price is Invalid'.
+        PERFORM update_contract_error USING lv_message CHANGING w_upfile_contract.
+      ENDIF.
+    ENDIF.
+
+    "Payment Amount
+    IF w_upfile_contract-pymtamount IS INITIAL.
+      CLEAR lv_message.
+      lv_message = 'Payment Amount is Blank'.
+      PERFORM update_contract_error USING lv_message CHANGING w_upfile_contract.
+    ELSE.
+      IF w_upfile_contract-pymtamount CA sy-abcde.
+        CLEAR lv_message.
+        lv_message = 'Payment Amount is Invalid'.
+        PERFORM update_contract_error USING lv_message CHANGING w_upfile_contract.
+      ENDIF.
+    ENDIF.
+
+    IF w_upfile_contract-status IS INITIAL.
+      w_upfile_contract-status = c_green.
+    ENDIF.
+
+    MODIFY i_upfile_contract FROM w_upfile_contract.
+
+  ENDLOOP.
+ENDFORM.
+
+
+*&---------------------------------------------------------------------*
+*  FORM GET_MAPPING                                                    *
+*&---------------------------------------------------------------------*
+FORM get_mapping.
+  REFRESH: i_mapping.
+  SELECT partner setvalue commission vat wht
+  INTO TABLE i_mapping
+  FROM ztr_ilp_bp2set.
+  IF sy-subrc EQ 0.
+    SORT i_mapping.
+  ENDIF.
+ENDFORM.
+
+
+*&---------------------------------------------------------------------*
+*  FORM GET_DIR_FILE                                                   *
+*&---------------------------------------------------------------------*
+FORM get_dir_file USING p_file.
+  DATA: l_files TYPE filetable,
+        h_files TYPE file_table,
+        l_rc LIKE sy-subrc.
+
+      CALL METHOD cl_gui_frontend_services=>file_open_dialog
+        CHANGING
+          file_table              = l_files
+          rc                      = l_rc
+        EXCEPTIONS
+          file_open_dialog_failed = 1
+          cntl_error              = 2
+          error_no_gui            = 3
+          not_supported_by_gui    = 4
+          OTHERS                  = 5.
+      IF sy-subrc <> 0 OR l_rc < 0.
+        MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+                   WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+      ELSE.
+        READ TABLE l_files INDEX 1 INTO h_files.
+        p_file = h_files-filename.
+      ENDIF.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*  FORM UPLOAD_FILE                                                    *
+*&---------------------------------------------------------------------*
+FORM upload_file.
+  TYPES: BEGIN OF lt_excel,
+          line(50000) TYPE c,
+         END OF lt_excel.
+
+  DATA: li_excel TYPE STANDARD TABLE OF lt_excel.
+
+  DATA: lv_index TYPE i,
+        lv_key   TYPE i,
+        lv_file  TYPE string,
+        lv_return(1) TYPE c,
+        lv_rc     TYPE i.
+  DATA: w_zbcabaphc TYPE zbcabaphc.
+
+  SELECT SINGLE * INTO w_zbcabaphc
+    FROM zbcabaphc
+    WHERE zprogram = 'ZTRI0054'
+      AND para1 = 'PASSWORD'
+      AND active = 'X'.
+  IF sy-subrc EQ 0.
+    p_pass = w_zbcabaphc-value1.
+  ELSE.
+    p_pass = 'AIA@1234'.
+  ENDIF.
+  CONDENSE p_pass NO-GAPS.
+  lv_file = p_file.
+  CALL METHOD cl_gui_frontend_services=>file_exist
+    EXPORTING
+      file                 = lv_file
+    RECEIVING
+      result               = lv_return
+    EXCEPTIONS
+      cntl_error           = 1
+      error_no_gui         = 2
+      wrong_parameter      = 3
+      not_supported_by_gui = 4
+      OTHERS               = 5.
+
+  IF sy-subrc <> 0.
+    MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+             WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+  ENDIF.
+  IF lv_return EQ space.
+    MESSAGE s024(ZAIA) WITH 'File not found' DISPLAY LIKE 'E'.
+    EXIT.
+  ENDIF.
+
+  CREATE OBJECT application 'excel.application'.
+  SET PROPERTY OF application 'VISIBLE' = 0.
+  CALL METHOD OF application 'Workbooks' = workbook.
+
+  CALL METHOD OF workbook 'Open'
+  EXPORTING
+    #1 = lv_file     "File location entered
+    #2 = 0
+    #3 = 0
+    #4 = 1           "format
+    #5 = p_pass.
+  IF sy-subrc NE 0.
+    MESSAGE 'Cannot open file' TYPE 'E'.
+  ENDIF.
+
+  CALL METHOD OF application 'Range' = range
+    EXPORTING
+      #1 = 'A1'
+      #2 = 'Q100'.
+
+  CALL METHOD OF range 'Select'.
+  CALL METHOD OF range 'Copy'.
+
+  CALL METHOD cl_gui_frontend_services=>clipboard_import
+    IMPORTING
+      data = li_excel
+    EXCEPTIONS
+      cntl_error = 1
+      error_no_gui = 2
+      not_supported_by_gui = 3
+      OTHERS = 4.
+  IF sy-subrc NE 0.
+    MESSAGE 'Error while uploading data' TYPE 'E'.
+  ENDIF.
+
+  PERFORM convert_excel TABLES li_excel i_rawfile USING cl_abap_char_utilities=>horizontal_tab.
+
+* clear clipboard
+  REFRESH li_excel.
+  CALL METHOD cl_gui_frontend_services=>clipboard_export
+    IMPORTING
+      data       = li_excel
+    CHANGING
+      rc         = lv_rc
+    EXCEPTIONS
+      cntl_error = 1
+*     ERROR_NO_GUI         = 2
+*     NOT_SUPPORTED_BY_GUI = 3
+      OTHERS     = 4.
+
+IF i_rawfile[] IS NOT INITIAL.
+    LOOP AT i_rawfile INTO w_rawfile.
+
+*-> Skip header
+      IF w_rawfile-row = 1.
+        CONTINUE.
+      ENDIF.
+
+      lv_index = w_rawfile-col.
+
+      TRY.
+          ASSIGN COMPONENT lv_index OF STRUCTURE w_upfile_contract TO <fs_field>.
+          IF <fs_field> IS ASSIGNED.
+            <fs_field> = w_rawfile-value.
+          ENDIF.
+        CATCH cx_sy_conversion_error.
+      ENDTRY.
+
+*-> Append Line
+      AT END OF row.
+        APPEND w_upfile_contract TO i_upfile_contract.
+        CLEAR w_upfile_contract.
+      ENDAT.
+      UNASSIGN <fs_field>.
+    ENDLOOP.
+
+  ENDIF.
+
+  CALL METHOD OF workbook 'CLOSE'.
+  CALL METHOD OF application 'QUIT'.
+
+  FREE OBJECT sheet.
+  FREE OBJECT workbook.
+  FREE OBJECT application.
+ENDFORM.
+
+FORM convert_excel TABLES i_tab TYPE ty_excel
+                          i_intern TYPE ty_intern
+                   USING  i_separator TYPE c.
+  DATA: l_sic_tabix LIKE sy-tabix,
+        l_sic_col   TYPE kcd_ex_col.
+  DATA: l_fdpos     LIKE sy-fdpos.
+
+  REFRESH i_intern.
+
+  LOOP AT i_tab.
+    l_sic_tabix = sy-tabix.
+    l_sic_col = 0.
+    WHILE i_tab CA i_separator.
+      l_fdpos = sy-fdpos.
+      l_sic_col = l_sic_col + 1.
+      PERFORM line_to_cell_separat TABLES i_intern
+                                   USING  i_tab l_sic_tabix l_sic_col
+                                          i_separator l_fdpos.
+    ENDWHILE.
+    IF i_tab <> space.
+      CLEAR i_intern.
+      i_intern-row = l_sic_tabix.
+      i_intern-col = l_sic_col + 1.
+      i_intern-value = i_tab.
+      APPEND i_intern.
+    ENDIF.
+  ENDLOOP.
+ENDFORM.
+
+FORM line_to_cell_separat TABLES i_intern    TYPE ty_intern
+                          USING  i_line
+                                 i_row       LIKE sy-tabix
+                                 ch_cell_col TYPE kcd_ex_col
+                                 i_separator TYPE c
+                                 i_fdpos     LIKE sy-fdpos.
+  DATA: l_string   TYPE t_excel.
+  DATA  l_sic_int  TYPE i.
+  CONSTANTS:  lc_esc VALUE '"'.
+
+  CLEAR i_intern.
+  l_sic_int = i_fdpos.
+  i_intern-row = i_row.
+  l_string = i_line.
+  i_intern-col = ch_cell_col.
+* csv Dateien mit separator in Zelle: --> ;"abc;cd";
+  IF ( i_separator = ';' OR  i_separator = ',' ) AND
+       l_string(1) = lc_esc.
+    PERFORM line_to_cell_esc_sep USING l_string
+                                       l_sic_int
+                                       i_separator
+                                       i_intern-value.
+  ELSE.
+    IF l_sic_int > 0.
+      i_intern-value = i_line(l_sic_int).
+    ENDIF.
+  ENDIF.
+  IF l_sic_int > 0.
+    APPEND i_intern.
+  ENDIF.
+  l_sic_int = l_sic_int + 1.
+  i_line = i_line+l_sic_int.
+ENDFORM.                    "line_to_cell_separat
+
+FORM line_to_cell_esc_sep USING i_string
+                                i_sic_int      TYPE i
+                                i_separator    TYPE c
+                                i_intern_value TYPE ty_internval.
+  DATA: l_int         TYPE i,
+        l_cell_end(2).
+  FIELD-SYMBOLS: <l_cell>.
+  CONSTANTS:  lc_esc VALUE '"'.
+  l_cell_end = lc_esc.
+  l_cell_end+1 = i_separator .
+
+  IF i_string CS lc_esc.
+    i_string = i_string+1.
+    IF i_string CS l_cell_end.
+      l_int = sy-fdpos.
+      ASSIGN i_string(l_int) TO <l_cell>.
+      i_intern_value = <l_cell>.
+      l_int = l_int + 2.
+      i_sic_int = l_int.
+      i_string = i_string+l_int.
+    ELSEIF i_string CS lc_esc.
+*     letzte Celle
+      l_int = sy-fdpos.
+      ASSIGN i_string(l_int) TO <l_cell>.
+      i_intern_value = <l_cell>.
+      l_int = l_int + 1.
+      i_sic_int = l_int.
+      i_string = i_string+l_int.
+      l_int = strlen( i_string ).
+      IF l_int > 0 . MESSAGE x001(kx) . ENDIF.
+    ELSE.
+      MESSAGE x001(kx) . "was ist mit csv-Format
+    ENDIF.
+  ENDIF.
+ENDFORM.                    "line_to_cell_esc_sep
+
+*&---------------------------------------------------------------------*
+*  FORM UPDATE_CONTRACT_ERROR                                          *
+*&---------------------------------------------------------------------*
+FORM update_contract_error USING p_message CHANGING p_upfile TYPE t_upfile_contract.
+  p_upfile-error   = c_x.
+  p_upfile-message = p_message.
+  p_upfile-status  = c_red.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*  FORM BUILD_FIELDCATALOG                                             *
+*&---------------------------------------------------------------------*
+FORM build_fieldcatalog.
+
+  PERFORM set_technical USING: 'RLDEPO',
+                               'INTTRADEDATE',
+                               'INTSETTLEDATE',
+                               'WAERS',
+                               'RANL',
+                               'GSART',
+                               'SANLF',
+                               'SNOTI',
+                               'SFHAART',
+                               'PARTNER',
+                               'GVC',
+                               'ERROR',
+                               'STATUS',
+                               'VAT'.
+
+
+  PERFORM set_column_text USING:
+    'BUKRS' 0 SPACE SPACE 'Company Code' 60 SPACE,
+    'LOCALTICKER' 0 SPACE SPACE 'Local Ticker' 60 SPACE,
+    'TTYPE' 0 SPACE SPACE 'Transaction Type' 60 SPACE,
+    'COUNTERPARTY' 0 SPACE SPACE 'Counter Party' 60 SPACE,
+    'PORTFOLIO' 0 SPACE SPACE 'Portfolio' 60 SPACE,
+    'TRADEDATE' 0 SPACE SPACE 'Trade Date' 60 SPACE,
+    'SETTLEDATE' 0 SPACE SPACE 'Settlement Date' 60 SPACE,
+    'NOMINALUNIT' 0 SPACE SPACE 'Nominal/Unit' 60 SPACE,
+    'PRICE' 0 SPACE SPACE 'Price' 60 SPACE,
+    'PYMTAMOUNT' 0 SPACE SPACE 'Payment Amount' 60 SPACE,
+    'ACCRUED_INT' 0 SPACE SPACE 'Accrued Interest' 60 SPACE,
+    'EXT_REF' 0 SPACE SPACE 'External Ref' 60 SPACE,
+    'INT_REF' 0 SPACE SPACE 'Internal Ref' 60 SPACE,
+    'ASSIGNMENT' 0 SPACE SPACE 'Assignment' 60 SPACE,
+    'COMM' 0 SPACE SPACE 'Commission' 60 SPACE,
+    'WHT' 0 SPACE SPACE 'WHT' 60 SPACE,
+    'MESSAGE' 0 SPACE SPACE 'Message' 60 SPACE.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*  FORM SET_TECHNICAL                                                  *
+*&---------------------------------------------------------------------*
+FORM set_technical USING pi_fieldname TYPE lvc_fname.
+  TRY.
+      o_column ?= o_columns_tab->get_column( pi_fieldname ).
+      o_column->set_technical( abap_true ).
+    CATCH cx_salv_not_found.                        "#EC NO_HANDLER
+  ENDTRY.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*  FORM SET_COLUMN_TEXT                                                *
+*&---------------------------------------------------------------------*
+FORM set_column_text USING pi_fieldname TYPE lvc_fname
+                           pi_color TYPE lvc_col
+                           pi_short TYPE scrtext_s
+                           pi_medium TYPE scrtext_m
+                           pi_long TYPE scrtext_l
+                           pi_outlen TYPE lvc_outlen
+                           pi_noout TYPE c.
+
+  DATA: ls_color TYPE lvc_s_colo.
+
+  TRY.
+      o_column ?= o_columns_tab->get_column( pi_fieldname ).
+      ls_color-col = pi_color.
+      o_column->set_color( ls_color ).
+      o_column->set_short_text( pi_short ).
+      o_column->set_medium_text( pi_medium ).
+      o_column->set_long_text( pi_long ).
+      o_column->set_output_length( pi_outlen ).
+      IF pi_noout EQ 'X'.
+        o_column->set_visible( abap_false ).
+      ENDIF.
+    CATCH cx_salv_not_found.                        "#EC NO_HANDLER
+  ENDTRY.
+ENDFORM.

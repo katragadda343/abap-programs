@@ -1,0 +1,1027 @@
+*&---------------------------------------------------------------------*
+* Program          : ZTRI0050
+* Created by       : Chua Yuan Wei (KSAP064)
+* Date             : 30 Jun 2017
+* Business Analyst : Dondapati, Koteswararao
+* Project	         : Project TH Pension & ILP
+* PIR/PCR          : 9000003082
+* Description      : NAV Report
+*&---------------------------------------------------------------------*
+*                         MODIFICATION HISTORY
+*&---------------------------------------------------------------------*
+* Changed by       :
+* Search on        :
+* Date             :
+* Business Analyst :
+* Project	         :
+* PIR/PCR          :
+* Description      :
+*&---------------------------------------------------------------------*
+
+REPORT ZTRI0050.
+
+*&---------------------------------------------------------------------*
+*  TABLES                                                              *
+*&---------------------------------------------------------------------*
+TABLES: fti_ldb_tr_positions,
+        adr6.
+
+*&---------------------------------------------------------------------*
+*  VARIABLES                                                           *
+*&---------------------------------------------------------------------*
+DATA: zzdividendreceivable TYPE tpm_amount,
+      zzbankbalances TYPE tpm_amount,
+      zztradereceivable TYPE tpm_amount,
+      zztradepayable TYPE tpm_amount,
+      zznav TYPE tpm_amount,
+      zznavpct TYPE P DECIMALS 2,
+      zzamor_amaqu_val_pc TYPE tpm_amount.
+
+TYPES: BEGIN OF t_positions.
+TYPES:    coltype TYPE c.
+  INCLUDE STRUCTURE FTI_LDB_TR_POSITIONS.
+TYPES:    txt_acc_ass_ref TYPE tracc_aa_ref_t-aa_ref_name,
+          txt_active_passive TYPE dd07d-ddtext,
+          txt_portfolio TYPE twpob_t-xportb,
+          txt_pos_man_proc TYPE trgc_pm_proc_t-pos_man_proc_t,
+          txt_secacc_cat TYPE dd07d-ddtext,
+          txt_secacc_type TYPE trsc_sa_type_t-secacc_type_text,
+          txt_security_account TYPE twd01-xldepo,
+          txt_security_id TYPE vwpanla-xallb,
+          txt_valuation_area TYPE trgc_val_area-val_area_name,
+          txt_valuation_class TYPE trgc_val_class_t-val_class_name,
+          txt_ind_sector TYPE tb038b-text,
+          txt_srolext TYPE char100,
+          txt_swpklass TYPE char100,
+          zacc_amaqu_lc TYPE fti_ldb_tr_positions-aqu_val_lc,
+          zacc_amaqu_pc TYPE fti_ldb_tr_positions-aqu_val_pc,
+          zacc_amaqu_rc TYPE fti_ldb_tr_positions-aqu_val_dc,
+          zacc_interest_lc TYPE fti_ldb_tr_positions-aqu_val_lc,
+          zacc_interest_rc TYPE fti_ldb_tr_positions-acc_interest_dc,
+          zamaqu_val_lc TYPE fti_amaqu_val_lc,
+          zamaqu_val_pc TYPE fti_amaqu_val_pc,
+          zamaqu_val_rc TYPE fti_ldb_tr_positions-amaqu_val_dc,
+          zamaqu_val_vc TYPE fti_amaqu_val_vc,
+          zaqu_val_rc TYPE fti_ldb_tr_positions-aqu_val_dc,
+          zamor_amaqu_val_pc LIKE zzamor_amaqu_val_pc,
+          zbook_val_lc TYPE fti_book_val_lc,
+          zbook_val_pc TYPE fti_book_val_pc,
+          zbook_val_rc TYPE fti_ldb_tr_positions-book_val_dc,
+          zbook_val_vc TYPE fti_book_val_vc,
+          zbval_inc_simval_lc TYPE fti_ldb_tr_positions-book_val_lc,
+          zbval_inc_simval_pc TYPE fti_ldb_tr_positions-book_val_pc,
+          zdepreq_lc TYPE fti_ldb_position_add_fields-fti_add_0001_lc,
+          zdepreq_pc TYPE fti_ldb_position_add_fields-fti_add_0001_pc,
+          zhidres_lc TYPE fti_ldb_position_add_fields-fti_add_0002_lc,
+          zhidres_pc TYPE fti_ldb_position_add_fields-fti_add_0002_pc,
+          zmarket_lc TYPE fti_ldb_position_add_fields-fti_add_0011_lc,
+          zpendgain_lc TYPE fti_ldb_position_add_fields-fti_add_0003_lc,
+          zpendgain_pc TYPE fti_ldb_position_add_fields-fti_add_0003_pc,
+          zpendloss_lc TYPE fti_ldb_position_add_fields-fti_add_0004_lc,
+          zpendloss_pc TYPE fti_ldb_position_add_fields-fti_add_0004_pc,
+          zrep_cur TYPE fti_ldb_tr_positions-anzgw,
+          zs_amort_rc TYPE fti_ldb_tr_positions-s_amort_dc,
+          zs_val_ti_npl_rc TYPE fti_ldb_tr_positions-s_val_ti_npl_dc,
+          zs_val_ti_rc TYPE fti_ldb_tr_positions-s_val_ti_dc,
+          zttl_amaqu_val_lc TYPE fti_ldb_tr_positions-amaqu_val_lc,
+          zttl_amaqu_val_pc TYPE fti_ldb_tr_positions-amaqu_val_pc,
+          zttl_amaqu_val_rc TYPE fti_ldb_tr_positions-amaqu_val_dc,
+          zval_fx_rpl_lc TYPE fti_ldb_position_add_fields-fti_add_0015_lc,
+          zval_ti_rpl_lc TYPE fti_ldb_position_add_fields-fti_add_0014_lc,
+          dividendreceivable LIKE zzdividendreceivable,
+          bankbalances LIKE zzbankbalances,
+          tradereceivable LIKE zztradereceivable,
+          tradepayable LIKE zztradepayable,
+          txt_gsart TYPE tzpat-ltx,
+          nav LIKE zznav,
+          navpct LIKE zznavpct,
+          srolext TYPE alwpkl,
+          sia_class TYPE zzsia_class,
+          ny_sec_type TYPE zz_ny_sec_type,
+          citicode TYPE vvranlwxs,
+          bbgcode TYPE vvranlwxs,
+          hbkid TYPE hbkid,
+          hktid TYPE hktid,
+          bankn TYPE bankn,
+          r_valid_from    TYPE datab,
+          r_institute     TYPE bp_sol_ins,
+          r_rating        TYPE bp_rating,
+          ticker          TYPE vvranlwxs,
+          dendf           TYPE dendf,
+          bp_grp          TYPE bp_grp,
+          bp_date_to      TYPE fsbp_rating_date_end,
+          bp_grade_method TYPE bp_grade_method,
+          bp_date_from    TYPE fsbp_rating_date_start,
+          bp_grade        TYPE bp_grade,
+          bp_date_when    TYPE fsbp_rating_date_entered,
+          bp_name_org1    TYPE bu_nameor1,
+          color TYPE lvc_t_scol.
+TYPES: END OF t_positions.
+
+TYPES: BEGIN OF t_summ,
+        bukrs     TYPE bukrs,
+        portfolio TYPE tpm_portfolio_diff,
+        txt_gsart TYPE tzpat-ltx,
+        nav       LIKE zznav,
+        color TYPE lvc_t_scol,
+       END OF t_summ.
+DATA: i_positions TYPE STANDARD TABLE OF t_positions,
+      i_summ      TYPE STANDARD TABLE OF t_summ,
+      w_summ      TYPE t_summ.
+
+DATA: w_excel       TYPE zbc_excel_data,
+      i_excel       TYPE ztt_excel_data,
+      w_border(4)   TYPE c.
+DATA: w_doc_type(3),
+      w_xml_table  TYPE solix_tab,
+      w_xml_size   TYPE i,
+      w_text       TYPE c LENGTH 60.
+  DEFINE insert_cell.
+    CLEAR w_excel.
+    move &1            to w_excel-sheet_nro.
+    move &2            to w_excel-row_nro.
+    move &3            to w_excel-column_nro.
+    move &4            to w_excel-value.
+    move &5            to w_excel-bold.
+    move &6            to w_excel-justify.
+    move &7            to w_excel-numberformat.
+    move &8            to w_border.
+    move w_border+0(1) to w_excel-border_top.
+    move w_border+1(1) to w_excel-border_right.
+    move w_border+2(1) to w_excel-border_bottom.
+    move w_border+3(1) to w_excel-border_left.
+    move &9            to w_excel-back_color.
+    append w_excel to i_excel.
+  END-OF-DEFINITION.
+
+*&---------------------------------------------------------------------*
+*  ALV                                                                 *
+*&---------------------------------------------------------------------*
+DATA: o_table               TYPE REF TO cl_salv_table,
+      o_column              TYPE REF TO cl_salv_column_table,
+      o_columns_tab         TYPE REF TO cl_salv_columns_table,
+      o_layout              TYPE REF TO cl_salv_layout,
+      o_functions           TYPE REF TO cl_salv_functions_list,
+      o_display             TYPE REF TO cl_salv_display_settings.
+
+*&---------------------------------------------------------------------*
+*  SELECTION-SCREEN                                                    *
+*&---------------------------------------------------------------------*
+ SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE text-b01.
+ SELECTION-SCREEN BEGIN OF LINE.
+ PARAMETER: p_sec1  TYPE fti_ldb_tr_parameters-flg_se
+                    USER-COMMAND sec
+                    MODIF ID flg.
+ SELECTION-SCREEN COMMENT 3(30) text-s01 FOR FIELD p_sec1.
+
+ PARAMETER: p_dea1 TYPE fti_ldb_tr_parameters-flg_otc
+                    USER-COMMAND otc
+                    MODIF ID flg.
+ SELECTION-SCREEN COMMENT 40(50) text-s02 FOR FIELD p_dea1.
+ SELECTION-SCREEN END   OF LINE.
+
+ SELECTION-SCREEN BEGIN OF LINE.
+ PARAMETER: p_loa1 TYPE fti_ldb_tr_parameters-flg_lo
+                    USER-COMMAND loa
+                    MODIF ID flg.
+ SELECTION-SCREEN COMMENT 3(30) text-s03 FOR FIELD p_loa1.
+
+ PARAMETER: p_pos1 TYPE fti_ldb_tr_parameters-flg_lof
+                    USER-COMMAND pos
+                    MODIF ID flg.
+ SELECTION-SCREEN COMMENT 40(50) text-s04 FOR FIELD p_pos1.
+ SELECTION-SCREEN END   OF LINE.
+ SELECTION-SCREEN END  OF BLOCK b1.
+
+ SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME TITLE text-b02.
+ SELECT-OPTIONS:  s_buk FOR fti_ldb_tr_positions-bukrs MEMORY ID buk,
+                  s_vla FOR fti_ldb_tr_positions-valuation_area
+                        DEFAULT '001'
+                        OBLIGATORY,
+                  s_rpo FOR fti_ldb_tr_positions-portfolio NO INTERVALS OBLIGATORY.
+ SELECT-OPTIONS:  s_dat FOR fti_ldb_tr_positions-stichtag
+                        NO INTERVALS
+                        NO-EXTENSION
+                        OBLIGATORY.
+ PARAMETERS: p_summ    TYPE c AS CHECKBOX.
+ PARAMETERS: p_update AS CHECKBOX.
+ SELECTION-SCREEN END  OF BLOCK b2.
+
+*** Start of AC004+ ***
+"email
+SELECTION-SCREEN BEGIN OF BLOCK b3 WITH FRAME TITLE text-b03.
+SELECTION-SCREEN BEGIN OF LINE.
+SELECTION-SCREEN COMMENT 1(17) text-s05 FOR FIELD p_esend.
+SELECTION-SCREEN POSITION 25.
+PARAMETERS: p_esend AS CHECKBOX.
+SELECTION-SCREEN END OF LINE.
+SELECT-OPTIONS: s_bname FOR adr6-smtp_addr NO INTERVALS.
+SELECTION-SCREEN END   OF BLOCK b3.
+*** End of  AC004+ ***
+
+*&---------------------------------------------------------------------*
+*  AT SELECTION-SCREEN                                                 *
+*&---------------------------------------------------------------------*
+AT SELECTION-SCREEN.
+  IF p_sec1 IS INITIAL AND
+     p_dea1 IS INITIAL AND
+     p_loa1 IS INITIAL AND
+     p_pos1 IS INITIAL.
+    MESSAGE e003(fti_ldb_message).
+  ENDIF.
+
+*&---------------------------------------------------------------------*
+*  START-OF-SELECTION                                                  *
+*&---------------------------------------------------------------------*
+START-OF-SELECTION.
+  PERFORM submit_program.
+  PERFORM display_alv.
+
+*&---------------------------------------------------------------------*
+*  FORM SUBMIT_PROGRAM                                                 *
+*&---------------------------------------------------------------------*
+FORM submit_program.
+
+  DATA: lv_repid TYPE sy-repid.
+  DATA: li_params TYPE TABLE OF rsparams,
+        lw_params TYPE rsparams.
+
+  DATA: lo_pay_data TYPE REF TO data.
+  DATA: li_positions TYPE STANDARD TABLE OF t_positions,
+        lw_positions TYPE t_positions,
+        lw_positions2 TYPE t_positions.
+
+  FIELD-SYMBOLS  : <fs_pay_data>   TYPE ANY TABLE .
+  FIELD-SYMBOLS  : <fs_pay_wa> TYPE ANY.
+
+  lv_repid = 'ZTRI0050'.
+
+  CALL FUNCTION 'RS_REFRESH_FROM_SELECTOPTIONS'
+    EXPORTING
+      curr_report     = lv_repid
+    TABLES
+      selection_table = li_params
+    EXCEPTIONS
+      not_found       = 1
+      no_report       = 2
+      OTHERS          = 3.
+  IF sy-subrc <> 0.
+    MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+            WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+  ENDIF.
+
+  IF p_summ EQ 'X'.
+    CLEAR lw_params.
+    lw_params-selname = 'P_EXT'.
+    lw_params-sign    = 'I'.
+    lw_params-option  = 'EQ'.
+    lw_params-low     = 'X'.
+    APPEND lw_params TO li_params.
+  ENDIF.
+
+  IF p_update EQ 'X'.
+    CLEAR lw_params.
+    lw_params-selname = 'P_UPDATE'.
+    lw_params-sign    = 'I'.
+    lw_params-option  = 'EQ'.
+    lw_params-low     = 'X'.
+    APPEND lw_params TO li_params.
+  ENDIF.
+
+*  CLEAR lw_params.
+*  lw_params-selname = 'P_ALV'.
+*  lw_params-sign    = 'I'.
+*  lw_params-option  = 'EQ'.
+*  lw_params-low     = SPACE.
+*  APPEND lw_params TO li_params.
+*  CLEAR lw_params.
+*  lw_params-selname = 'P_RST_PB'.
+*  lw_params-sign    = 'I'.
+*  lw_params-option  = 'EQ'.
+*  lw_params-low     = '1'.
+*  APPEND lw_params TO li_params.
+
+  DATA: ls_color TYPE lvc_s_scol,
+        lt_color TYPE lvc_t_scol.
+  REFRESH lt_color.
+
+  ls_color-color-col = '5'.
+  ls_color-color-int = '1'.
+  APPEND ls_color TO lt_color.
+
+  LOOP AT s_rpo.
+    cl_salv_bs_runtime_info=>set( EXPORTING display  = abap_false
+                                             metadata = abap_false
+                                             data     = abap_true ).
+
+    DELETE li_params WHERE selname = 'S_RPO'.
+      lw_params-selname = 'S_RPO'.
+      lw_params-kind = 'S'.
+      lw_params-sign    = 'I'.
+      lw_params-option  = 'EQ'.
+      lw_params-low     = s_rpo-low.
+      APPEND lw_params TO li_params.
+
+    DELETE li_params WHERE selname = 'S_POR'.
+      lw_params-selname = 'S_POR'.
+      lw_params-kind = 'S'.
+      lw_params-sign    = 'I'.
+      lw_params-option  = 'EQ'.
+      lw_params-low     = s_rpo-low.
+      APPEND lw_params TO li_params.
+
+      SUBMIT ZTRI0051 WITH SELECTION-TABLE li_params
+                     AND RETURN.
+
+      TRY.
+        cl_salv_bs_runtime_info=>get_data_ref( IMPORTING r_data = lo_pay_data ).
+
+        ASSIGN lo_pay_data->* TO <fs_pay_data>.
+      CATCH cx_salv_bs_sc_runtime_info.
+          MESSAGE `Unable to retrieve ALV data` TYPE 'E'.
+      ENDTRY.
+
+      REFRESH li_positions.
+      LOOP AT <fs_pay_data> ASSIGNING  <fs_pay_wa>.
+        CLEAR lw_positions.
+        MOVE-CORRESPONDING  <fs_pay_wa> TO lw_positions.
+        APPEND lw_positions TO li_positions.
+      ENDLOOP.
+
+      IF p_summ EQ 'X'.
+        SORT li_positions BY coltype ASCENDING.
+        READ TABLE li_positions INTO lw_positions2 INDEX 1.
+        DELETE li_positions WHERE coltype EQ SPACE.
+        LOOP AT li_positions INTO lw_positions.
+          MOVE-CORRESPONDING lw_positions TO w_summ.
+          w_summ-bukrs = lw_positions2-bukrs.
+          w_summ-portfolio = s_rpo-low.
+          APPEND w_summ TO i_summ.
+        ENDLOOP.
+        CLEAR w_summ.
+        w_summ-color = lt_color.
+        APPEND w_summ TO i_summ.
+      ENDIF.
+      CLEAR lw_positions.
+      lw_positions-color = lt_color.
+      APPEND lw_positions TO li_positions.
+      APPEND LINES OF li_positions TO i_positions.
+  ENDLOOP.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*  FORM DISPLAY_ALV                                                    *
+*&---------------------------------------------------------------------*
+FORM display_alv.
+  DATA: lv_key TYPE salv_s_layout_key,
+        lv_title TYPE lvc_title,
+        lv_tmp TYPE string,
+        lv_date(10) TYPE c.
+
+    cl_salv_bs_runtime_info=>set( EXPORTING display  = abap_true
+                                             metadata = abap_false
+                                             data     = abap_true ).
+
+  IF p_summ EQ 'X'.
+    TRY.
+        cl_salv_table=>factory(
+          IMPORTING
+            r_salv_table = o_table
+          CHANGING
+            t_table      = i_summ ).
+      CATCH cx_salv_msg.                                  "#EC NO_HANDLER
+    ENDTRY.
+  ELSE.
+    TRY.
+        cl_salv_table=>factory(
+          IMPORTING
+            r_salv_table = o_table
+          CHANGING
+            t_table      = i_positions ).
+      CATCH cx_salv_msg.                                  "#EC NO_HANDLER
+    ENDTRY.
+  ENDIF.
+
+  o_columns_tab = o_table->get_columns( ).
+  o_columns_tab->set_optimize( abap_true ).
+
+  o_display = o_table->get_display_settings( ).
+
+  CLEAR: lv_title, lv_date.
+*  WRITE s_dat-low TO lv_date DD/MM/YYYY.
+  CONCATENATE s_dat-low+6(2) s_dat-low+4(2) s_dat-low+0(4) INTO lv_date.
+  IF s_rpo IS NOT INITIAL.
+    CONCATENATE sy-title 'for Fund:' s_rpo-low 'on Key Date:' INTO lv_tmp SEPARATED BY SPACE.
+    CONCATENATE lv_tmp lv_date INTO lv_title SEPARATED BY SPACE.
+  ELSE.
+    CONCATENATE sy-title 'for Key Date:' INTO lv_tmp SEPARATED BY SPACE.
+    CONCATENATE lv_tmp lv_date INTO lv_title SEPARATED BY SPACE.
+  ENDIF.
+
+  CONCATENATE 'NAV Report (' s_rpo-low ') on:' s_dat-low INTO w_text.
+
+
+  o_display->set_list_header( lv_title ).
+  o_functions = o_table->get_functions( ).
+  o_functions->set_all( ).
+
+  o_layout = o_table->get_layout( ).
+  lv_key-report = sy-repid.
+  o_layout->set_key( lv_key ).
+
+  o_layout->set_save_restriction( if_salv_c_layout=>restrict_none ).
+  o_layout->set_default( abap_true ).
+
+  PERFORM build_fieldcatalog.
+  IF p_esend IS NOT INITIAL AND s_bname IS NOT INITIAL.
+    PERFORM send_email.
+  ENDIF.
+
+
+  TRY.
+      o_table->display( ).
+    CATCH cx_salv_msg.                                  "#EC NO_HANDLER
+  ENDTRY.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*  FORM BUILD_FIELDCATALOG                                             *
+*&---------------------------------------------------------------------*
+FORM build_fieldcatalog.
+
+  IF p_summ EQ 'X'.
+    PERFORM set_technical USING: 'VALUATION_AREA',
+                                 'VALUATION_CLASS',
+                                 'POS_MAN_PROC',
+                                 'ACTIVE_PASSIVE',
+                                 'GSART',
+                                 'SECURITY_ID',
+                                 'SECURITY_ACCOUNT',
+                                 'STICHTAG',
+                                 'ACC_ASS_REF',
+                                 'HKONT',
+                                 'PARTNR',
+                                 'IND_SECTOR',
+                                 'PORTFOLIO_TM',
+                                 'SECACC_TYPE',
+                                 'SECACC_CAT',
+                                 'SWPKLASS',
+                                 'SBOERNOT',
+                                 'SHWHR',
+                                 'SVWHR',
+                                 'SBWHR',
+                                 'ANZGW'.
+    PERFORM set_column_text USING: 'NAV'  3 'Value' 'Value' 'Value' 29 SPACE.
+  ELSE.
+    PERFORM set_column_text USING: 'NAV'  3 'NAV' 'NAV' 'Net asset value (NAV)' 29 SPACE.
+  ENDIF.
+
+*Hide Standard Columns
+  PERFORM set_technical USING: 'MANDT',
+                              'OS_GUID',
+                              'LAND1',
+                              'TR_ACC_CODE',
+                              'ACTIVE_PASSIVE',
+                              'HEDGE_ID',
+                              'ACCOUNT_GROUP',
+                              'POSITION_ACCOUNT',
+                              'EXTERNAL_ACCOUNT',
+                              'DIFF_CURRENCY',
+                              'EXTACC_DEAL',
+                              'FLAG_LONG_SHORT',
+                              'DLOTGENERATION',
+                              'TLOTGENERATION',
+                              'LOTGENERATION_USER',
+                              'LOTGENERATION_BUSTRANSCAT',
+                              'LOTPOS_INIT_DATE',
+                              'LOTPOS_ORG_DATE',
+                              'LOTGEN_DEALNR',
+                              'FUND',
+                              'GRANT_NBR',
+                              'RREFKONT_R',
+                              'RLZMO',
+                              'RLZJA',
+                              'UEBTG',
+                              'UEBMO',
+                              'UEBJA',
+                              'LEGAL_ENTY',
+                              'LEGAL_ORG',
+                              'NATION',
+                              'STATE',
+                              'GROUP_D',
+                              'STAFF_GRP',
+                              'COMP_RE',
+                              'GRADE',
+                              'GRADE_METHOD',
+                              'SOL_I_D',
+                              'RATING',
+                              'FINPROJ',
+                              'RMAID',
+                              'RGARANT',
+                              'RDPBANK',
+                              'SECACC_TYPE',
+                              'SECACC_CAT',
+                              'SBILK',
+                              'SNOTI',
+                              'SWERTTYP',
+                              'SFOTY',
+                              'SARTBET',
+                              'SBOERNOT',
+                              'VVRANLWX',
+                              'KBNEWE',
+                              'KZAHLAKT',
+                              'INT_CAT',
+                              'COMMODITY_ID',
+                              'UL_LOAN_ID',
+                              'SHWHR',
+                              'ANZGW',
+                              'CALC_CCY',
+                              'WVERB1',
+                              'WFORD1',
+                              'SWHRKOND',
+                              'CTY_UOM',
+                              'UNITS_LOCKED',
+                              'CTY_QUANTITY',
+                              'NOMINAL_AMT_LO_PC',
+                              'NOMINAL_AMT_DC',
+                              'NOMINAL_AMT_LO_DC',
+                              'NOMINAL_ORG_AMT_PC',
+                              'NOMINAL_AMT_OUT_PC',
+                              'NOMINAL_AMT_IN_PC',
+                              'NOMINAL_AMT_OUT_DC',
+                              'NOMINAL_AMT_IN_DC',
+                              'PURCH_LC',
+                              'PURCH_DC',
+                              'AQU_VAL_LC',
+                              'AQU_VAL_DC',
+                              'BOOK_VAL_LC',
+                              'BOOK_VAL_DC',
+                              'CHARGE_PC',
+                              'CHARGE_LC',
+                              'CHARGE_VC',
+                              'CHARGE_DC',
+                              'BOOK_VAL_EX_PC',
+                              'BOOK_VAL_EX_LC',
+                              'BOOK_VAL_EX_VC',
+                              'BOOK_VAL_EX_DC',
+                              'VAL_TI_LC',
+                              'VAL_TI_DC',
+                              'VAL_FX_LC',
+                              'VAL_FX_AMAQU_VAL_LC',
+                              'VAL_FX_AMAQU_VAL_VC',
+                              'VAL_CH_TI_PC',
+                              'VAL_CH_TI_LC',
+                              'VAL_CH_TI_VC',
+                              'VAL_CH_TI_DC',
+                              'VAL_CH_FX_LC',
+                              'VAL_CH_FX_VC',
+                              'AMORT_LC',
+                              'AMORT_DC',
+                              'IMPMNT_LC',
+                              'IMPMNT_DC',
+                              'IMPMNT_FX_LC',
+                              'REPAYMENT_PC',
+                              'REPAYMENT_LC',
+                              'REPAYMENT_VC',
+                              'REPAYMENT_DC',
+                              'AMAQU_VAL_LC',
+                              'AMAQU_VAL_DC',
+                              'DISAGIO_PC',
+                              'DISAGIO_LC',
+                              'DISAGIO_VC',
+                              'DISAGIO_DC',
+                              'VAL_TI_NPL_PC',
+                              'VAL_TI_NPL_LC',
+                              'VAL_TI_NPL_VC',
+                              'VAL_TI_NPL_DC',
+                              'VAL_FX_NPL_LC',
+                              'VAL_FX_NPL_VC',
+                              'VAL_CH_TI_NPL_PC',
+                              'VAL_CH_TI_NPL_LC',
+                              'VAL_CH_TI_NPL_VC',
+                              'VAL_CH_TI_NPL_DC',
+                              'VAL_CH_FX_NPL_LC',
+                              'VAL_CH_FX_NPL_VC',
+                              'VARMAR_LC',
+                              'VARMAR_DC',
+                              'SPOTVALP_LC',
+                              'SPOTVALS_LC',
+                              'SWAPACC_PC',
+                              'SWAPACC_LC',
+                              'SWAPACC_DC',
+                              'SWAPVAL_LC',
+                              'SWAPVAL_VC',
+                              'CONS_GAINS_TI_PC',
+                              'CONS_GAINS_TI_LC',
+                              'CONS_GAINS_TI_VC',
+                              'CONS_GAINS_TI_DC',
+                              'CONS_LOSSES_TI_PC',
+                              'CONS_LOSSES_TI_LC',
+                              'CONS_LOSSES_TI_VC',
+                              'CONS_LOSSES_TI_DC',
+                              'CONS_GAINS_FX_LC',
+                              'CONS_GAINS_FX_VC',
+                              'CONS_LOSSES_FX_LC',
+                              'CONS_LOSSES_FX_VC',
+                              'ANKUPR',
+                              'ANKSBW',
+                              'BUKUPR',
+                              'BUKSBW',
+                              'KURSPR',
+                              'KURSBW',
+                              'MARKET_DC',
+                              'MARKET_DATE',
+                              'ACC_INTEREST_DC',
+                              'ACC_DEF_INT_PC',
+                              'ACC_DEF_INT_DC',
+                              'ACC_DEF_INT_VC',
+                              'ACC_DEF_INT_LC',
+                              'NPV_DC',
+                              'NPV_CC',
+                              'NPV_LONG_PC',
+                              'NPV_SHORT_PC',
+                              'NPV_LONG_CC',
+                              'NPV_SHORT_CC',
+                              'CLEAN_PRICE_PC',
+                              'CLEAN_PRICE_DC',
+                              'CLEAN_PRICE_CC',
+                              'BPVALUE_PC',
+                              'BPVALUE_DC',
+                              'BPVALUE_CC',
+                              'MAC_DURATION',
+                              'MOD_DURATION',
+                              'FW_DURATION',
+                              'CONVEXITY',
+                              'DELTA',
+                              'GAMMA',
+                              'THETA',
+                              'VEGA',
+                              'S_VAL_TI_LC',
+                              'S_VAL_TI_DC',
+                              'S_VAL_FX_LC',
+                              'S_VAL_FX_AMAQU_VAL_LC',
+                              'S_VAL_FX_AMAQU_VAL_VC',
+                              'S_VAL_CH_TI_PC',
+                              'S_VAL_CH_TI_LC',
+                              'S_VAL_CH_TI_VC',
+                              'S_VAL_CH_TI_DC',
+                              'S_VAL_CH_FX_LC',
+                              'S_VAL_CH_FX_VC',
+                              'S_AMORT_LC',
+                              'S_AMORT_DC',
+                              'S_DISAGIO_PC',
+                              'S_DISAGIO_LC',
+                              'S_DISAGIO_VC',
+                              'S_DISAGIO_DC',
+                              'S_VAL_TI_NPL_PC',
+                              'S_VAL_TI_NPL_LC',
+                              'S_VAL_TI_NPL_VC',
+                              'S_VAL_TI_NPL_DC',
+                              'S_VAL_FX_NPL_LC',
+                              'S_VAL_FX_NPL_VC',
+                              'S_VAL_CH_TI_NPL_PC',
+                              'S_VAL_CH_TI_NPL_LC',
+                              'S_VAL_CH_TI_NPL_VC',
+                              'S_VAL_CH_TI_NPL_DC',
+                              'S_VAL_CH_FX_NPL_LC',
+                              'S_VAL_CH_FX_NPL_VC',
+                              'S_SPOTVALP_LC',
+                              'S_SPOTVALP_VC',
+                              'S_SPOTVALS_LC',
+                              'S_SPOTVALS_VC',
+                              'S_SWAPACC_PC',
+                              'S_SWAPACC_LC',
+                              'S_SWAPACC_VC',
+                              'S_SWAPACC_DC',
+                              'S_SWAPVAL_LC',
+                              'S_SWAPVAL_VC',
+                              'S_VALID_DATE',
+                              'S_VALID_RATE_DATE',
+                              'S_MAP',
+                              'S_MAR_FE',
+                              'S_SPOT_RATE_P',
+                              'S_SPOT_RATE_S',
+                              'S_SWAP_RATE_P',
+                              'S_SWAP_RATE_S',
+                              'ZERO_POSITION'.
+
+*Text Columns (Fieldname, Color, Short Text, Medium Text, Long Text, Output Length, Hide).
+  PERFORM set_column_text USING: 'TXT_ACC_ASS_REF'       1 SPACE SPACE 'Text:Account Assignment Reference of Pos' 60 SPACE,
+                                 'TXT_ACTIVE_PASSIVE'    1 SPACE SPACE 'Text:Assets/Liabilities Indicator' 60 SPACE,
+                                 'TXT_POS_MAN_PROC'      1 SPACE SPACE 'Text:Position Management Procedure' 60 SPACE,
+                                 'TXT_GSART'             1 SPACE SPACE 'Text:Product Type' 30 SPACE,
+                                 'TXT_PORTFOLIO'         1 SPACE SPACE 'Text:Portfolio' 30 SPACE,
+                                 'TXT_POS_MAN_PROC'      1 SPACE SPACE 'Text:Position Management Procedure' 60 SPACE,
+                                 'TXT_SECACC_CAT'        1 SPACE SPACE 'Text:Securities Account Category' 60 SPACE,
+                                 'TXT_SECACC_TYPE'       1 SPACE SPACE 'Text:Securities Account Type' 30 SPACE,
+                                 'TXT_SECURITY_ACCOUNT'  1 SPACE SPACE 'Text:Securities Account' 30 SPACE,
+                                 'TXT_SECURITY_ID'       1 SPACE SPACE 'Text:Security ID Number' 60 SPACE,
+                                 'TXT_VALUATION_AREA'    1 SPACE SPACE 'Text:Valuation Area' 60 SPACE,
+                                 'TXT_VALUATION_CLASS'   1 SPACE SPACE 'Text:Valuation Class' 60 SPACE,
+                                 'TXT_IND_SECTOR'        1 SPACE SPACE 'Text:Industry' 60 SPACE,
+                                 'TXT_SROLEXT'           1 SPACE SPACE 'Text:Sec. Classification' 60 SPACE,
+                                 'TXT_SWPKLASS'          1 SPACE SPACE 'Text:Bond. Classification' 60 SPACE.
+
+*Custom Columns Text
+  PERFORM set_column_text USING: 'SROLEXT'               1 'Sec.Class' 'Sec. Classific' 'Sec. Classification' 29 SPACE,
+                                 'SWPKLASS'              0 'Bond.Class' 'Bond. Classific' 'Bond. Classification' 29 SPACE,
+                                 'SIA_CLASS'             1 'SIA_CLASS' 'SIA_CLASS' 'SIA_CLASS' 29 SPACE,
+                                 'NY_SEC_TYPE'           1 'NYSecType' 'NY Sec Type' 'NY Security Type' 29 SPACE,
+                                 'BBGCODE'               1 'BBQCODE' 'BLOOMBERG CODE' 'BLOOMBERG CODE' 29 SPACE,
+                                 'CITICODE'              1 'CITICODE' 'CITIBANK CODE' 'CITIBANK CODE' 29 SPACE,
+                                 'NAVPCT'                3 'NAV%' 'NAV%' 'Net asset value (NAV) %' 29 SPACE,
+                                 'HBKID'                 1 'HouseBank' 'House Bank' 'House Bank' 5 'X',
+                                 'HKTID'                 1 'AcctID' 'Account ID' 'Account ID' 5 'X',
+                                 'BANKN'                 1 'BankAcct' 'Bank Account' 'Bank Account' 18 'X',
+                                 'TRADERECEIVABLE'       1 'TradeRecv' 'TradeReceivable' 'Trade Receivable' 29 SPACE,
+                                 'TRADEPAYABLE'          1 'TradePay' 'TradePayable' 'Trade Payable' 29 SPACE,
+                                 'DIVIDENDRECEIVABLE'    1 'DivRecv' 'DivReceivable' 'Dividend Receivable' 29 'X',
+                                 'BANKBALANCES'          1 'BankBalLC' 'Bank Balances LC' 'Bank Balances in LC' 29 'X',
+                                 'R_VALID_FROM'          1 SPACE SPACE SPACE 0 SPACE,
+                                 'R_INSTITUTE'           1 SPACE SPACE SPACE 0 SPACE,
+                                 'R_RATING'              1 SPACE SPACE SPACE 0 SPACE,
+                                 'TICKER'                1 SPACE SPACE SPACE 0 SPACE,
+                                 'DENDF'                 1 SPACE SPACE SPACE 0 SPACE,
+                                 'BP_GRP'                1 SPACE SPACE SPACE 0 SPACE,
+                                 'BP_DATE_TO'            1 SPACE SPACE SPACE 0 SPACE,
+                                 'BP_GRADE_METHOD'       1 SPACE SPACE SPACE 0 SPACE,
+                                 'BP_DATE_FROM'          1 SPACE SPACE SPACE 0 SPACE,
+                                 'BP_GRADE'              1 SPACE SPACE SPACE 0 SPACE,
+                                 'BP_DATE_WHEN'          1 SPACE SPACE SPACE 0 SPACE,
+                                 'BP_NAME_ORG1'          1 SPACE SPACE SPACE 0 SPACE.
+
+*Hide Custom Columns
+  PERFORM set_technical   USING: 'COLTYPE',
+*                                 'ZACC_AMAQU_LC',
+                                 'ZACC_AMAQU_PC',
+                                 'ZACC_AMAQU_RC',
+*                                 'ZACC_INTEREST_LC',
+                                 'ZACC_INTEREST_RC',
+                                 'ZAMAQU_VAL_RC',
+                                 'ZAMAQU_VAL_LC',
+                                 'ZAMAQU_VAL_VC',
+                                 'ZAMAQU_VAL_PC',
+                                 'ZAQU_VAL_RC',
+                                 'ZBOOK_VAL_RC',
+                                 'ZBOOK_VAL_LC',
+                                 'ZBOOK_VAL_VC',
+                                 'ZBOOK_VAL_PC',
+*                                 'ZBVAL_INC_SIMVAL_LC',
+                                 'ZBVAL_INC_SIMVAL_PC',
+                                 'ZDEPREQ_LC',
+                                 'ZDEPREQ_PC',
+                                 'ZHIDRES_LC',
+                                 'ZHIDRES_PC',
+                                 'ZMARKET_LC',
+                                 'ZPENDGAIN_LC',
+                                 'ZPENDGAIN_PC',
+                                 'ZPENDLOSS_LC',
+                                 'ZPENDLOSS_PC',
+                                 'ZREP_CUR',
+                                 'ZS_AMORT_RC',
+                                 'ZS_VAL_TI_NPL_RC',
+                                 'ZS_VAL_TI_RC',
+                                 'ZTTL_AMAQU_VAL_LC',
+                                 'ZTTL_AMAQU_VAL_PC',
+                                 'ZTTL_AMAQU_VAL_RC',
+                                 'ZVAL_FX_RPL_LC',
+                                 'ZVAL_TI_RPL_LC',
+                                 'TRADERECEIVABLE',
+                                 'TRADEPAYABLE'.
+
+*Custom Amount Columns Text
+  PERFORM set_column_text USING:
+                                 'ZACC_AMAQU_LC'         1 'ZAccAmorLC' 'ZAcc.Amor.LC' 'ZAcc. Amortization in LC' 29 SPACE,
+                                 'ZACC_AMAQU_PC'         1 'ZAccAmorPC' 'ZAcc.Amor.PC' 'ZAcc. Amortization in PC' 29 SPACE,
+                                 'ZACC_AMAQU_RC'         1 'ZAccAmorRC' 'ZAcc.Amor.RC' 'ZAcc. Amortization in RC' 29 SPACE,
+                                 'ZACC_INTEREST_LC'      1 'ZAccIntLC' 'ZAcc.Int.LC' 'ZAccrued Interest In LC' 29 SPACE,
+                                 'ZACC_INTEREST_RC'      1 'ZAccIntRC' 'ZAcc.Int.RC' 'ZAccrued Interest In RC' 29 SPACE,
+                                 'ZAMAQU_VAL_RC'         1 'ZAmorAcqRC' 'ZAmor.Acq.Cost.RC' 'ZAmort Acq Cost in RC' 29 SPACE,
+                                 'ZAMAQU_VAL_LC'         1 'ZAmorAcqLC' 'ZAmor.Acq.Cost.LC' 'ZAmort Acq Cost in LC' 29 SPACE,
+                                 'ZAMAQU_VAL_VC'         1 'ZAmorAcqVC' 'ZAmor.Acq.Cost.VC' 'ZAmort Acq Cost in VC' 29 SPACE,
+                                 'ZAMAQU_VAL_PC'         1 'ZAmorAcqPC' 'ZAmor.Acq.Cost.PC' 'ZAmort Acq Cost in PC' 29 SPACE,
+                                 'ZAQU_VAL_RC'           1 'ZAcqValRC' ' ZAcq.Val.RC' 'ZAcq.Value In RC' 29 SPACE,
+                                 'ZBOOK_VAL_RC'          1 'ZBookValRC' 'ZBook.Val.RC' 'ZBook Value In RC' 29 SPACE,
+                                 'ZBOOK_VAL_LC'          1 'ZBookValRC' 'ZBook.Val.LC' 'ZBook Value In LC' 29 SPACE,
+                                 'ZBOOK_VAL_VC'          1 'ZBookValRC' 'ZBook.Val.VC' 'ZBook Value In VC' 29 SPACE,
+                                 'ZBOOK_VAL_PC'          1 'ZBookValRC' 'ZBook.Val.PC' 'ZBook Value In PC' 29 SPACE,
+                                 'ZBVAL_INC_SIMVAL_LC'   1 'ZBkVlSimLC' 'ZBook.Val.Sim.LC' 'ZBook Val. Sim. Valua LC' 29 SPACE,
+                                 'ZBVAL_INC_SIMVAL_PC'   1 'ZBkVlSimPC' 'ZBook.Val.Sim.PC' 'ZBook Val. Sim. Valua PC' 29 SPACE,
+                                 'ZDEPREQ_LC'            1 'ZWDReqLC' 'ZWrite.Dwn.Req.LC' 'ZWrite-Down Requirement in LC' 29 SPACE,
+                                 'ZDEPREQ_PC'            1 'ZWDReqPC' 'ZWrite.Dwn.Req.PC' 'ZWrite-Down Requirement in PC' 29 SPACE,
+                                 'ZHIDRES_LC'            1 'ZHidResLC' 'ZHid.Reserve.LC' 'ZHidden Reserve in LC' 29 SPACE,
+                                 'ZHIDRES_PC'            1 'ZHidResPC' 'ZHid.Reserve.PC' 'ZHidden Reserve in PC' 29 SPACE,
+                                 'ZMARKET_LC'            1 'ZMktValLC' 'ZMarket.Value.LC' 'ZMarket Value LC' 29 SPACE,
+                                 'ZPENDGAIN_LC'          1 'ZPenGainLC' 'ZPend.Gain.LC' 'ZPending Gains in LC' 29 SPACE,
+                                 'ZPENDGAIN_PC'          1 'ZPenGainPC' 'ZPend.Gain.PC' 'ZPending Gains in PC' 29 SPACE,
+                                 'ZPENDLOSS_LC'          1 'ZPenLossLC' 'ZPend.Loss.LC' 'ZPending Loss in LC' 29 SPACE,
+                                 'ZPENDLOSS_PC'          1 'ZPenLossPC' 'ZPend.Loss.PC' 'ZPending Loss in PC' 29 SPACE,
+                                 'ZREP_CUR'              1 'ZRptCur' 'ZReporting.Cur' 'ZReporting Currency' 29 SPACE,
+                                 'ZS_AMORT_RC'           1 'ZAmorSimRC' 'ZAmor.Sim.RC' 'ZAmortization in RC (Sim.)' 29 SPACE,
+                                 'ZS_VAL_TI_NPL_RC'      1 'ZNPLSimRC' 'ZS.Val.NPL.Sim.RC' 'ZSec.Val. NPL RC (Sim.)' 29 SPACE,
+                                 'ZS_VAL_TI_RC'          1 'ZSValSimRC' 'ZS.Val.Sim.RC' 'ZSec.Valuation In RC (Sim)' 29 SPACE,
+                                 'ZTTL_AMAQU_VAL_LC'     1 'ZTTLAmquLC' 'ZTTL.Amor.Acq.LC' 'ZTtl Amort Acq Cost in LC' 29 SPACE,
+                                 'ZTTL_AMAQU_VAL_PC'     1 'ZTTLAmquPC' 'ZTTL.Amor.Acq.PC' 'ZTtl Amort Acq Cost in PC' 29 SPACE,
+                                 'ZTTL_AMAQU_VAL_RC'     1 'ZTTLAmquRC' 'ZTTL.Amor.Acq.RC' 'ZTtl Amort Acq Cost in RC' 29 SPACE,
+                                 'ZVAL_FX_RPL_LC'        1 'ZFXRPLLC' 'ZFX.Val.Aff.PL.LC' 'ZFX Val. Aff. P/L LC' 29 SPACE,
+                                 'ZVAL_TI_RPL_LC'        1 'ZSecRPLLC' 'ZSec.Val.Aff.PL.LC'  'ZSec. Val. Aff. P/L LC' 29 SPACE,
+                                 'ZAMOR_AMAQU_VAL_PC'    1 'ZSimAmAqV' 'ZSimAmAqVal' 'ZSim.Amor.Acq.Value.' 29 SPACE.
+
+
+*   We will set this COLOR table field name of the internal table to
+*   COLUMNS tab reference for the specific colors
+    TRY.
+        o_columns_tab->set_color_column( 'COLOR' ).
+      CATCH cx_salv_data_error.                         "#EC NO_HANDLER
+    ENDTRY.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*  FORM SET_TECHNICAL                                                  *
+*&---------------------------------------------------------------------*
+FORM set_technical USING pi_fieldname TYPE lvc_fname.
+  TRY.
+      o_column ?= o_columns_tab->get_column( pi_fieldname ).
+      o_column->set_technical( abap_true ).
+    CATCH cx_salv_not_found.                        "#EC NO_HANDLER
+  ENDTRY.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*  FORM SET_COLUMN_TEXT                                                *
+*&---------------------------------------------------------------------*
+FORM set_column_text USING pi_fieldname TYPE lvc_fname
+                           pi_color TYPE lvc_col
+                           pi_short TYPE scrtext_s
+                           pi_medium TYPE scrtext_m
+                           pi_long TYPE scrtext_l
+                           pi_outlen TYPE lvc_outlen
+                           pi_noout TYPE c.
+
+  DATA: ls_color TYPE lvc_s_colo.
+
+  TRY.
+      o_column ?= o_columns_tab->get_column( pi_fieldname ).
+      ls_color-col = pi_color.
+      o_column->set_color( ls_color ).
+      IF pi_short NE SPACE.
+        o_column->set_short_text( pi_short ).
+      ENDIF.
+
+      IF pi_medium NE SPACE.
+        o_column->set_medium_text( pi_medium ).
+      ENDIF.
+
+      IF pi_long NE SPACE.
+        o_column->set_long_text( pi_long ).
+      ENDIF.
+
+      IF pi_outlen NE 0.
+        o_column->set_output_length( pi_outlen ).
+      ENDIF.
+      IF pi_noout EQ 'X'.
+        o_column->set_visible( abap_false ).
+      ENDIF.
+    CATCH cx_salv_not_found.                        "#EC NO_HANDLER
+  ENDTRY.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  SEND_EMAIL
+*&---------------------------------------------------------------------*
+*       Send Email
+*----------------------------------------------------------------------*
+FORM send_email.
+  PERFORM create_excel.
+  PERFORM send.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  CREATE_EXCEL
+*&---------------------------------------------------------------------*
+*       Create Excel
+*----------------------------------------------------------------------*
+FORM create_excel.
+  DATA: li_fcat TYPE lvc_t_fcat,
+        lw_fcat LIKE LINE OF li_fcat,
+        lv_row TYPE i,
+        lv_column TYPE i,
+        lw_output LIKE LINE OF i_positions,
+        lv_string TYPE text128.
+
+  FIELD-SYMBOLS: <fs_field>.
+  DATA: lw_columns    TYPE REF TO cl_salv_columns_table.
+  DATA: lw_aggr       TYPE REF TO cl_salv_aggregations. "AC003+
+      lw_columns  = o_table->get_columns( ).
+      lw_aggr     = o_table->get_aggregations( ).
+      li_fcat     =  cl_salv_controller_metadata=>get_lvc_fieldcatalog(
+                                    r_columns      = lw_columns
+                                    r_aggregations = lw_aggr ).
+
+      ADD 1 to lv_row.
+      LOOP AT li_fcat INTO lw_fcat WHERE tech EQ SPACE.
+        ADD 1 to lv_column.
+        insert_cell 1 lv_row lv_column lw_fcat-scrtext_l SPACE SPACE SPACE '1111' SPACE.
+      ENDLOOP.
+
+      CLEAR lv_column.
+      LOOP AT i_positions INTO lw_output.
+
+        ADD 1 to lv_row.
+
+        LOOP AT li_fcat INTO lw_fcat WHERE tech EQ SPACE.
+            ADD 1 to lv_column.
+
+            ASSIGN COMPONENT lw_fcat-fieldname OF STRUCTURE lw_output TO <fs_field>.
+            IF <fs_field> IS ASSIGNED.
+              CLEAR lv_string.
+              lv_string = <fs_field>.
+              IF lw_fcat-fieldname EQ 'LOT_ID'.
+                CONCATENATE ''' ' lv_string INTO lv_string.
+              ENDIF.
+              insert_cell 1 lv_row lv_column lv_string SPACE SPACE SPACE '1111' SPACE.
+            ENDIF.
+        ENDLOOP.
+        CLEAR lv_column.
+      ENDLOOP.
+*     Create EXCEL XML
+      REFRESH w_xml_table.
+      CLEAR w_xml_size.
+      CALL FUNCTION 'ZBC_CREATE_EXCEL'
+        EXPORTING
+          i_excel_data       = i_excel
+        IMPORTING
+          e_doc_type         = w_doc_type
+          e_xml_table        = w_xml_table
+          e_xml_size         = w_xml_size
+        EXCEPTIONS
+          posizione_mancante = 1
+          posizione_ripetuta = 2
+          OTHERS             = 3.
+
+      IF sy-subrc <> 0.
+        MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+                WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+      ENDIF.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  SEND
+*&---------------------------------------------------------------------*
+*       Send
+*----------------------------------------------------------------------*
+FORM send.
+  DATA: li_attachment TYPE STANDARD TABLE OF rmps_post_content,
+        lw_attachment LIKE LINE OF li_attachment.
+  DATA: li_recipients TYPE ztt_recipients,
+        lw_recipients TYPE zbc_recipients,
+        lw_subject TYPE string,
+        lw_return TYPE bapiret2,
+        li_body TYPE bcsy_text,
+        lw_body TYPE soli,
+        lv_message TYPE string.
+
+  MOVE w_text TO lw_subject.
+
+  REFRESH li_attachment.
+  CLEAR: lw_attachment, li_attachment.
+
+  CONCATENATE 'NAVReport_' sy-datum INTO lw_attachment-subject.
+  MOVE 'XLS'       TO lw_attachment-doc_type. "w_doc_type
+  MOVE 'X'         TO lw_attachment-binary.
+  MOVE w_xml_table TO lw_attachment-cont_hex.
+  MOVE w_xml_size  TO lw_attachment-docsize.
+  APPEND lw_attachment TO li_attachment.
+
+  REFRESH li_recipients.
+  CLEAR lw_recipients.
+
+  LOOP AT s_bname.
+    MOVE s_bname-low TO lw_recipients-email.
+    APPEND lw_recipients TO li_recipients.
+  ENDLOOP.
+
+  CONCATENATE 'Please find attached' w_text INTO lv_message SEPARATED BY SPACE.
+* Send EMAIL
+  CALL FUNCTION 'ZBC_SEND_EMAIL'
+    EXPORTING
+      subject     = lw_subject
+      message     = lv_message
+      mailbody    = li_body
+      attachments = li_attachment[]
+      recipients  = li_recipients
+    IMPORTING
+      return      = lw_return
+    EXCEPTIONS
+      no_body     = 1
+      bcs_error   = 2
+      OTHERS      = 3.
+
+  IF sy-subrc <> 0.
+    MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+            WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+  ELSE.
+    MESSAGE s024(ZAIA) WITH 'Document Sent'.
+  ENDIF.
+ENDFORM.
