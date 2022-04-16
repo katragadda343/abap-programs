@@ -1,0 +1,334 @@
+*======================================================================
+*                         MODIFICATION HISTORY
+*=======================================================================
+* Changed by       : Kerry Kuan (KSCSP33)
+* Search on        : KK001
+* Date             : 25th July 2012
+* Business Analyst : Kavita
+* Project	         :
+* PIR/PCR          : 9000000969
+* Description      : get the portfolio from futures account when
+*                    portfolio (position) and Transaction Number are empty.
+*-----------------------------------------------------------------------
+*                         MODIFICATION HISTORY
+*=======================================================================
+* Changed by       : Ravi Teja Katragadda (KSAP249)
+* Search on        : Kr001
+* Date             : 20 April 2019
+* Business Analyst : Pankaj Jain
+* Project	         : Hedge Accounting Automation
+* PIR/PCR          : 9000020083
+* Description      :  Replace the code block as per der. portfolio
+*-----------------------------------------------------------------------
+* Changed by       : Andy Setiawan Sudianto (KSAP210)
+* Search on        : AS001
+* Date             : 27 May 2020
+* Business Analyst : Koteswararao
+* Project	         : Halley
+* PIR/PCR          : 8000021364 / 9000020734
+* Description      : add new code block ZZUSER07 (Liab. Portfolio)
+*                    with posting date validation
+*-----------------------------------------------------------------------
+
+METHOD if_ex_ac_document~change_after_check.
+
+  DATA: im_item    TYPE accit,
+        ex_item    TYPE accit_sub,
+        w_blart    TYPE t003-blart,
+        text_len   TYPE i,
+        text_len_r TYPE i.
+  CONSTANTS c_kokrs(4) VALUE 'AP01'.
+  CONSTANTS c_mfl(3) VALUE 'MFL'.
+* start of modification C20101026+
+* Constants for country check on segment maintenance
+  CONSTANTS c_ccmy(2) VALUE 'MY'.
+  CONSTANTS c_ccsg(2) VALUE 'SG'.
+* put the 1st 2 letters for the company code in the coutries for segment maintenance control.
+  CONSTANTS c_cc01(2) VALUE ''.
+  CONSTANTS c_cc02(2) VALUE ''.
+  CONSTANTS c_cc03(2) VALUE ''.
+  CONSTANTS c_cc04(2) VALUE ''.
+
+* message control for country check on segment maintenance, use value X to turn it on.
+  CONSTANTS c_msg(1) VALUE ''.
+* constants c_msg(1) value 'X'.
+* end of modification C20101026+
+
+  DATA: lv_rportb TYPE rportb,
+        lv_rfha   TYPE tb_rfha.    "KK001+
+
+*START of insertion AS001
+  TYPES :
+    BEGIN OF t_zbcabaphc,
+      zprogram TYPE zbcabaphc-zprogram,
+      para1    TYPE zbcabaphc-para1,
+      sign     TYPE zbcabaphc-sign,
+      opt      TYPE zbcabaphc-opt,
+      low      TYPE zbcabaphc-low,
+    END OF t_zbcabaphc.
+
+  DATA : lr_budat     TYPE RANGE OF accit-budat,
+         lw_zbcabaphc TYPE t_zbcabaphc,
+         lw_r_budat   LIKE LINE OF lr_budat.
+
+  CONSTANTS :
+    c_zprogram TYPE char15 VALUE 'ZTR_AC_DOCUMENT',
+    c_para1    TYPE char8  VALUE 'ZZUSER07'.
+
+*get effective date
+  SELECT zprogram
+         para1
+         sign
+         opt
+         low
+    UP TO 1 ROWS
+    INTO lw_zbcabaphc
+    FROM zbcabaphc
+    WHERE zprogram = c_zprogram
+      AND para1    = c_para1
+      AND active   = abap_true.
+  ENDSELECT.
+  IF sy-subrc EQ 0.
+    lw_r_budat-sign   = lw_zbcabaphc-sign.
+    lw_r_budat-option = lw_zbcabaphc-opt.
+    lw_r_budat-low    = lw_zbcabaphc-low.
+
+    APPEND lw_r_budat TO lr_budat.
+    CLEAR : lw_r_budat,
+            lw_zbcabaphc.
+  ENDIF.
+*END of insertion AS001
+
+  MOVE-CORRESPONDING im_document-header TO ex_document-header.
+
+*  Judge whether the posting comes from FAM transactions (check FI document type for FAM in table ZTR_FAM_DOC_TYPE).
+
+  LOOP AT im_document-item INTO im_item.
+    SELECT SINGLE blart INTO w_blart
+    FROM ztr_fam_doc_type
+    WHERE blart = im_item-blart.
+    IF sy-subrc = 0.
+
+*--> start of selection KK001+  25/07/2012
+      CLEAR lv_rportb.
+      IF im_item-portfolio IS INITIAL AND im_item-deal_nr IS INITIAL.
+        SELECT SINGLE rportb INTO lv_rportb
+          FROM trft_pos_account
+         WHERE company_code = im_item-bukrs
+           AND pos_account  = im_item-position_account.
+        IF sy-subrc = 0.
+          im_item-portfolio = lv_rportb.
+        ENDIF.
+      ENDIF.
+*--> end of selection KK001+ 25/07/2012
+
+*    case im_item-blart.
+*      when 'TB' or 'TM' or 'TA' or 'TP' or 'TR' or 'TV'.
+
+* Judge the GL account number for code block requirement. not required.
+
+*      if im_item-HKONT(1) = '1' or im_item-HKONT(1) = '2' or im_item-HKONT(1) = '7'
+*        or im_item-HKONT(2) = '40' or im_item-HKONT(2) = '44' or im_item-HKONT(2) = '46'.
+
+* Judge whether portfolio is entered in the transaction
+
+      IF im_item-portfolio EQ space AND im_item-deal_nr NE space.
+        SELECT SINGLE rportb FROM vtbfha INTO im_item-portfolio
+         WHERE bukrs = im_item-bukrs
+         AND rfha = im_item-deal_nr.
+
+        IF ( sy-subrc = 0 AND im_item-portfolio EQ space ) OR sy-subrc NE 0.
+
+* Error message if portfolio is not maintained in transactions
+
+          MESSAGE e001(ztr_portfolio).
+        ELSE.
+
+          MOVE-CORRESPONDING im_item TO ex_item.
+
+* Get code block information from the bespoken table ztr_portfolio based on portfolio.
+* start of modification C20101026+
+* Add field segment & zzuser04 in table ztr_portfolio, 26-Oct-10 by HACHV13 C20101026+
+
+          SELECT SINGLE zzuser01 zzuser02 zzuser03 zzuser06 prctr segment zzuser04
+                        zzuser07 "insertion AS001
+            FROM ztr_portfolio
+            INTO (ex_item-zzuser01, ex_item-zzuser02, ex_item-zzuser03, ex_item-zzuser06, ex_item-prctr, ex_item-segment, ex_item-zzuser04, ex_item-zzuser07) "INSERTION AS001
+*            INTO (ex_item-zzuser01, ex_item-zzuser02, ex_item-zzuser03, ex_item-zzuser06, ex_item-prctr, ex_item-segment, ex_item-zzuser04)"DELETION AS001
+            WHERE comp_code = im_item-bukrs
+            AND portfolio = im_item-portfolio.
+          IF sy-subrc = 0.
+*START INSERTION AS001
+            IF ( im_item-budat IN lr_budat AND
+                 lr_budat IS NOT INITIAL )
+                 OR
+                 lr_budat IS INITIAL."if hardcoded ineffective date not maintained in table ZBCABAPHC
+              CLEAR : ex_item-zzuser07.
+            ENDIF.
+*END INSERTION AS001
+* Check if segment has been maintained for Singapore & Malaysia, if not, issue an error message to stop posting
+            IF ex_item-segment IS INITIAL.
+              CASE im_item-bukrs(2).
+                WHEN c_ccsg OR c_ccmy OR c_cc01 OR c_cc02 OR c_cc03 OR c_cc04.
+                  IF c_msg = 'X'.
+* issue error message if no segment information has been maintained for the specific countries.
+                    MESSAGE e006(ztr_portfolio) WITH im_item-bukrs im_item-portfolio.
+
+                  ENDIF.
+              ENDCASE.
+* end of C20101026+
+* Get Segment from profit center master table.
+
+              SELECT SINGLE segment
+              FROM cepc
+              INTO ex_item-segment
+              WHERE prctr = ex_item-prctr
+              AND kokrs = c_kokrs
+              AND datab <= im_item-budat
+              AND datbi >= im_item-budat.
+
+* Error message if can't find segment from profit center master
+
+              IF sy-subrc NE 0.
+                MESSAGE e003(ztr_portfolio).
+              ENDIF.
+* start of insert  C20101026+
+            ENDIF.
+* end of C20101026+
+
+            text_len = strlen( im_item-sgtxt ).
+            text_len_r = text_len - 13.
+
+*             ex_item-ZUONR = im_item-portfolio.
+* Change item text in accounting document, the rule is transaction number + security ID + original item text
+
+            IF im_item-deal_nr NE space.
+              CONCATENATE im_item-deal_nr im_item-security_id im_item-sgtxt(text_len_r) INTO ex_item-sgtxt.
+* E0005 - Update ULP fund codes in FI documents
+              IF im_item-product_type = c_mfl.
+                ex_item-xref3 = im_item-security_id.
+              ENDIF.                                        "end of E0005
+            ENDIF.
+            INSERT ex_item INTO TABLE ex_document-item.
+          ELSE.
+
+* Error message if the relationship for portfolio and code block is not maintained
+
+            MESSAGE e002(ztr_portfolio) WITH im_item-bukrs im_item-portfolio.
+
+
+          ENDIF.
+        ENDIF.
+      ELSEIF im_item-portfolio NE space.
+        MOVE-CORRESPONDING im_item TO ex_item.
+
+* Get code block information from the bespoken table ztr_portfolio based on portfolio.
+* start of modification C20101026+
+* Add field segment & zzuser04 in table ztr_portfolio, 26-Oct-10 by HACHV13 C20101026+
+
+        SELECT SINGLE zzuser01 zzuser02 zzuser03 zzuser06 prctr segment zzuser04
+                      zzuser07 "insertion AS001
+          FROM ztr_portfolio
+          INTO (ex_item-zzuser01, ex_item-zzuser02, ex_item-zzuser03, ex_item-zzuser06, ex_item-prctr, ex_item-segment, ex_item-zzuser04, ex_item-zzuser07 ) "INSERTION AS001
+*          INTO (ex_item-zzuser01, ex_item-zzuser02, ex_item-zzuser03, ex_item-zzuser06, ex_item-prctr, ex_item-segment, ex_item-zzuser04)"DELETION AS001
+          WHERE comp_code = im_item-bukrs
+          AND portfolio = im_item-portfolio.
+        IF sy-subrc = 0.
+*START INSERTION AS001
+            IF ( im_item-budat IN lr_budat AND
+                 lr_budat IS NOT INITIAL )
+                 OR
+                 lr_budat IS INITIAL."if hardcoded ineffective date not maintained in table ZBCABAPHC
+              CLEAR : ex_item-zzuser07.
+            ENDIF.
+*END INSERTION AS001
+* Check if segment has been maintained for Singapore & Malaysia, if not, issue an error message to stop posting
+          IF ex_item-segment IS INITIAL.
+            CASE im_item-bukrs(2).
+              WHEN c_ccsg OR c_ccmy OR c_cc01 OR c_cc02 OR c_cc03 OR c_cc04.
+                IF c_msg = 'X'.
+* issue error message if no segment information has been maintained for the specific countries.
+                  MESSAGE e006(ztr_portfolio) WITH im_item-bukrs im_item-portfolio.
+
+                ENDIF.
+            ENDCASE.
+* end of C20101026+
+
+* Get Segment from profit center master table.
+
+            SELECT SINGLE segment
+            FROM cepc
+            INTO ex_item-segment
+            WHERE prctr = ex_item-prctr
+            AND kokrs = c_kokrs
+            AND datab <= im_item-budat
+            AND datbi >= im_item-budat.
+
+* Error message if can't find segment from profit center master
+
+            IF sy-subrc NE 0.
+              MESSAGE e003(ztr_portfolio).
+            ENDIF.
+* start of insert  C20101026+
+          ENDIF.
+* end of C20101026+
+
+          text_len = strlen( im_item-sgtxt ).
+          text_len_r = text_len - 13.
+
+*             ex_item-ZUONR = im_item-portfolio.
+* Change item text in accounting document, the rule is transaction number + security ID + original item text
+
+          IF im_item-deal_nr NE space.
+            CONCATENATE im_item-deal_nr im_item-security_id im_item-sgtxt(text_len_r) INTO ex_item-sgtxt.
+* E0005 - Update ULP fund codes in FI documents
+            IF im_item-product_type = c_mfl.
+              ex_item-xref3 = im_item-security_id.
+            ENDIF.                                              "end of E0005
+          ENDIF.
+          INSERT ex_item INTO TABLE ex_document-item.
+        ELSE.
+
+* Error message if the relationship for portfolio and code block is not maintained
+
+          MESSAGE e002(ztr_portfolio) WITH im_item-bukrs im_item-portfolio.
+
+
+        ENDIF.
+      ELSE.
+
+* Error message if portfolio is not maintained in transactions
+
+        MESSAGE e001(ztr_portfolio).
+
+      ENDIF.
+*      endif.
+    ENDIF.
+*    endcase.
+
+*--> start  KR001+  20/05/2019
+* HEDGE ACCOUNTING - for the postings related to derivatives OCI handling for hedge accounting, the custom program ZTR_AMORTIZE_OCi uses FWBS on the underlying security
+* position and passes the porfolio of derivative in the assignment field of the posting document preceding with $OCI$. If string $OCI$ is available,
+* read the derivative portfolio from assignment field and replace the code block as per der. portfolio
+*
+*    IF im_item-zuonr CS '$OCI$'.
+*      DELETE ex_document-item INDEX sy-tabix.
+*      CLEAR ex_item.
+*      MOVE-CORRESPONDING im_item TO ex_item.
+*      MOVE im_item-zuonr+5(13) TO lv_rfha.
+*      SELECT SINGLE rportb INTO lv_rportb FROM vtbfha WHERE bukrs = im_item-bukrs AND
+*                                                            rfha = lv_rfha.
+*      CHECK lv_rportb IS NOT INITIAL.
+*      SELECT SINGLE zzuser01 zzuser02 zzuser03 zzuser06 prctr segment zzuser04
+*        FROM ztr_portfolio
+*        INTO (ex_item-zzuser01, ex_item-zzuser02, ex_item-zzuser03, ex_item-zzuser06, ex_item-prctr, ex_item-segment, ex_item-zzuser04)
+*        WHERE comp_code = im_item-bukrs
+*        AND portfolio = lv_rportb.
+*
+*      INSERT ex_item INTO TABLE ex_document-item.
+*
+*    ENDIF.
+*
+  ENDLOOP.
+*  end of KR001+.
+ENDMETHOD.
