@@ -1,0 +1,1595 @@
+*=======================================================================
+* Program          : ZTRI5022
+* Created by       : Aaron Ooi (KSAP046)
+* Search on        :
+* Date             : 09 Jan 2014
+* Business Analyst : Tong Keen Soon
+* Project          :
+* PIR/PCR          : PCR 8000004675
+* Description      : - To download Position details into a CSV file to
+*                      be used by other programs to further process
+*                    - Copy partially code from program
+*                      ZTR_HOLDING_POSITION_LIST_BB
+*=======================================================================
+*                         MODIFICATION HISTORY
+*=======================================================================
+* Changed by       : Ow Meng Yuan (KSAP050)
+* Search on        : OW001
+* Date             : 12 Feb 2014
+* Business Analyst : Tong Keen Soon
+* Project          :
+* PIR/PCR          : PCR 8000004675
+* Description      : - Add logic to filter ID number, after REPO selection
+*                    - Add missing position date for output file
+*-----------------------------------------------------------------------
+* Changed by       : Chua Yuan Wei (KSAP064)
+* Search on        : AC001
+* Date             : 10 Jan 2016
+* Business Analyst : Tong Keen Soon
+* Project          :
+* PIR/PCR          : PIR 6000003982
+* Description      : Add product type
+*-----------------------------------------------------------------------
+* Changed by       : Chua Yuan Wei (KSAP064)
+* Search on        : AC002
+* Date             : 29 Apr 2020
+* Business Analyst : Liew Woon Peng
+* Project          :
+* PIR/PCR          : 9000020682
+* Description      :
+*-----------------------------------------------------------------------
+* Changed by       : Kai Xiang Tew (E104483)
+* Search on        : KX001
+* Date             : 5 Jan 2021
+* Business Analyst : Ng Kenny
+* Project          :
+* PIR/PCR          : 4000213983
+* Description      : MYGFS-Missing NLT in Sec Price  Request F
+*-----------------------------------------------------------------------
+* Changed by       : Andy Setiawan (KSAP210)
+* Search on        : AS001
+* Date             : 11th FEB 2022
+* Business Analyst : Koteswararao
+* Project          : Project Yulan
+* PIR/PCR          : 9000021582
+* Description      :
+* extract CSAP open position from table ZTR_ATRAS_SMF
+*-----------------------------------------------------------------------
+REPORT  ztri5022 MESSAGE-ID ztr_mc_e0003.
+
+*-----------------------------------------------------------------------
+* TYPES
+*-----------------------------------------------------------------------
+TABLES: vwpanla.                                            "#EC NEEDED
+
+TYPE-POOLS abap.
+
+TYPES: t_output TYPE string.
+
+TYPES: BEGIN OF t_repo,
+         bukrs TYPE vtbfha-bukrs,
+         rfha  TYPE vtbfha-rfha,
+         ranl  TYPE vtbfha-ranl,
+       END OF t_repo.
+
+TYPES: BEGIN OF t_prod_type,
+         gsart TYPE ztr_prodtype,
+       END OF t_prod_type.
+
+*-----------------------------------------------------------------------
+* CONSTANTS
+*-----------------------------------------------------------------------
+CONSTANTS: c_sep(1)      TYPE c VALUE ',', "File separator
+           c_txt(4)      TYPE c VALUE '.txt', "File extenstion
+           c_x(1)        TYPE c VALUE 'X',
+           c_server_path TYPE dxfields-longpath VALUE '/sapinterface'.
+
+*-----------------------------------------------------------------------
+* INTERNAL TABLES
+*-----------------------------------------------------------------------
+DATA: i_output    TYPE TABLE OF t_output,
+      i_positions TYPE trsy_quantity_position,
+      i_tab       TYPE TABLE OF rsparams,
+      i_repo      TYPE STANDARD TABLE OF t_repo.
+
+*-----------------------------------------------------------------------
+* WORK AREAS
+*-----------------------------------------------------------------------
+DATA: v_time             TYPE sy-uzeit,
+      w_indx             TYPE indx,
+      v_number           TYPE tbtcjob-jobcount,
+      v_name             TYPE tbtcjob-jobname VALUE 'JOB_TEST',
+      v_print_parameters TYPE pri_params,
+      v_status           TYPE tbtco-status,
+      v_filename         TYPE string.
+
+*** Start of AC002+ ***
+DATA: gv_total         TYPE i,
+      gv_available     TYPE i,
+      gv_occupied      TYPE i,
+      gv_diff          TYPE i,
+      gv_split         TYPE i,
+      gv_lines         TYPE i,
+      gv_lines_tab     TYPE i,
+      gv_start         TYPE i,
+      gv_end           TYPE i,
+      gv_task          TYPE string,
+      gv_index         TYPE string,
+      gv_sent          TYPE i,
+      gv_comp          TYPE i,
+      gv_result        TYPE flag,
+      gv_result_string TYPE string.
+DATA: i_position_quantity TYPE TABLE OF ztrqs_position_quantity.
+*** End of AC002+ ***
+
+*-----------------------------------------------------------------------
+* PARAMETERS
+*-----------------------------------------------------------------------
+*** Start of AC001+ ***
+SELECTION-SCREEN BEGIN OF BLOCK prod WITH FRAME TITLE TEXT-prd.
+
+SELECTION-SCREEN BEGIN OF LINE.
+PARAMETERS p_sec TYPE fti_ldb_tr_parameters-flg_se AS CHECKBOX
+                 DEFAULT 'X' USER-COMMAND sec
+                 MODIF ID pgs.
+SELECTION-SCREEN COMMENT 4(50) TEXT-sec FOR FIELD p_sec
+                 MODIF ID pgs.
+SELECTION-SCREEN END OF LINE.
+
+SELECTION-SCREEN BEGIN OF LINE.
+PARAMETERS p_pos TYPE fti_ldb_tr_parameters-flg_lof
+                 AS CHECKBOX DEFAULT ' ' USER-COMMAND pos
+                 MODIF ID pgp.
+SELECTION-SCREEN COMMENT 4(50) TEXT-pos FOR FIELD p_pos
+                 MODIF ID pgp.
+SELECTION-SCREEN END OF LINE.
+
+SELECTION-SCREEN BEGIN OF LINE.
+PARAMETERS p_dea TYPE fti_ldb_tr_parameters-flg_otc
+                 AS CHECKBOX DEFAULT ' ' USER-COMMAND dea
+                 MODIF ID pgd.
+SELECTION-SCREEN COMMENT 4(15) TEXT-dea FOR FIELD p_dea
+                 MODIF ID pgd.
+SELECTION-SCREEN COMMENT 20(40) TEXT-gdd FOR FIELD p_dea
+                 MODIF ID pgd.
+SELECTION-SCREEN END OF LINE.
+
+SELECTION-SCREEN END OF BLOCK prod.
+*** End of  AC001+ ***
+SELECTION-SCREEN BEGIN OF BLOCK diff WITH FRAME TITLE TEXT-h01.
+SELECT-OPTIONS: so_sid FOR vwpanla-ranl,
+                so_sty FOR vwpanla-gsart.
+
+PARAMETERS: p_date   TYPE tpm_position_date DEFAULT sy-datum,
+            p_size   TYPE i DEFAULT 1000 NO-DISPLAY,   "AC001+
+            p_appsvr TYPE rzllitab-classname DEFAULT 'parallel_generators', "AC002+
+            p_fiscal AS CHECKBOX USER-COMMAND fscl,
+            p_nozero TYPE tpm_flag_no_zero AS CHECKBOX.
+SELECTION-SCREEN END OF BLOCK diff.
+
+SELECTION-SCREEN BEGIN OF BLOCK control WITH FRAME TITLE TEXT-h02.
+PARAMETERS: p_file   TYPE txt1024,
+            p_path   TYPE txt1024,
+            p_dnload AS CHECKBOX USER-COMMAND dnld DEFAULT 'X'.
+SELECTION-SCREEN END OF BLOCK control.
+
+*-----------------------------------------------------------------------
+* INITIALIZATION
+*-----------------------------------------------------------------------
+INITIALIZATION.
+  v_time = sy-uzeit.
+  PERFORM set_filename CHANGING p_file.
+
+*-----------------------------------------------------------------------
+* AT SELECTION-SCREEN
+*-----------------------------------------------------------------------
+AT SELECTION-SCREEN OUTPUT.
+  LOOP AT SCREEN.
+    IF screen-name = 'P_FILE'.
+      screen-input = 0.
+      MODIFY SCREEN.
+    ENDIF.
+  ENDLOOP.
+
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_path.
+  IF p_dnload IS NOT INITIAL.
+    PERFORM file_open_dialog.
+  ELSE.
+    PERFORM server_file_browser.
+  ENDIF.
+
+AT SELECTION-SCREEN.
+  PERFORM set_filename CHANGING p_file.
+
+  IF p_dnload IS INITIAL AND sy-ucomm EQ 'DNLD'.
+    p_path = c_server_path.
+  ENDIF.
+
+*-----------------------------------------------------------------------
+* START-OF-SELECTION
+*-----------------------------------------------------------------------
+START-OF-SELECTION.
+  PERFORM populate_products.
+  PERFORM set_filename CHANGING p_file.
+  PERFORM check_file_access.
+  PERFORM get_position.
+  PERFORM prepare_output.
+
+*-----------------------------------------------------------------------
+* END-OF-SELECTION
+*-----------------------------------------------------------------------
+END-OF-SELECTION.
+
+  IF p_dnload = abap_true.
+    PERFORM download_output USING v_filename.
+    IF sy-subrc = 0.
+      MESSAGE i028.
+    ENDIF.
+  ELSE.
+    PERFORM save_output USING v_filename.
+    IF sy-subrc = 0.
+      MESSAGE i029.
+    ENDIF.
+  ENDIF.
+
+*&---------------------------------------------------------------------*
+*&      Form  SET_DEFAULTS
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM set_filename CHANGING lp_filename TYPE txt1024.
+  DATA: lv_time TYPE string.
+  CLEAR: lp_filename.
+
+  lv_time = v_time.
+  lv_time = lv_time(4).
+
+  IF p_fiscal EQ c_x.
+    CONCATENATE TEXT-t01 p_date lv_time c_txt INTO lp_filename.
+  ELSE.
+    CONCATENATE TEXT-t02 p_date lv_time c_txt INTO lp_filename.
+  ENDIF.
+ENDFORM.                    " SET_DEFAULTS
+
+*&---------------------------------------------------------------------*
+*&      Form  FILE_OPEN_DIALOG
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM file_open_dialog .
+  DATA: lv_path TYPE string.
+
+  lv_path = p_path.
+
+  CALL METHOD cl_gui_frontend_services=>directory_browse
+    EXPORTING
+*     WINDOW_TITLE         =
+      initial_folder       = lv_path
+    CHANGING
+      selected_folder      = lv_path
+    EXCEPTIONS
+      cntl_error           = 1
+      error_no_gui         = 2
+      not_supported_by_gui = 3
+      OTHERS               = 4.
+
+  IF sy-subrc NE 0.
+    MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+               WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+  ELSE.
+    p_path = lv_path.
+  ENDIF.
+ENDFORM.                    " FILE_OPEN_DIALOG
+
+*&---------------------------------------------------------------------*
+*&      Form  SERVER_FILE_BROWSER
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM server_file_browser .
+  DATA: lv_path TYPE txt1024.
+
+  CALL FUNCTION '/SAPDMC/LSM_F4_SERVER_FILE'
+    EXPORTING
+      directory        = c_server_path
+*     FILEMASK         = ' '
+    IMPORTING
+      serverfile       = lv_path
+    EXCEPTIONS
+      canceled_by_user = 1
+      OTHERS           = 2.
+
+  IF sy-subrc NE 0.
+    MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+            WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+  ELSE.
+    p_path = lv_path.
+  ENDIF.
+
+ENDFORM.                    " SERVER_FILE_BROWSER
+
+*&---------------------------------------------------------------------*
+*&      Form  CHECK_FILE_ACCESS
+*&---------------------------------------------------------------------*
+*       verify that the selected file is editable
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM check_file_access .
+  DATA: lv_header TYPE string VALUE 'SEC_TYPE,SEC_ID'.
+
+  CLEAR: v_filename.
+
+* Column Header
+  INSERT lv_header INTO i_output INDEX 1.
+
+  IF p_path IS INITIAL.
+    MESSAGE TEXT-e01 TYPE 'S'.
+    LEAVE LIST-PROCESSING.
+  ENDIF.
+
+* Try to write to the file in case of error before proceeding further.
+  IF p_dnload = abap_true.
+    CONCATENATE p_path '\' p_file INTO v_filename.
+    PERFORM download_output USING v_filename.
+    PERFORM gui_delete_file USING v_filename.
+  ELSE.
+    CONCATENATE p_path '/' p_file INTO v_filename.
+    PERFORM save_output USING v_filename.
+    DELETE DATASET v_filename.
+  ENDIF.
+
+  REFRESH i_output.
+ENDFORM.                    " CHECK_FILE_ACCESS
+
+*&---------------------------------------------------------------------*
+*&      Form  DOWNLOAD_OUTPUT
+*&---------------------------------------------------------------------*
+*       Download output to local PC
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM download_output USING lp_filename TYPE string.
+  CALL FUNCTION 'GUI_DOWNLOAD'
+    EXPORTING
+      filename                 = lp_filename
+      write_lf_after_last_line = abap_false
+    TABLES
+      data_tab                 = i_output
+    EXCEPTIONS
+      file_write_error         = 1
+      no_batch                 = 2
+      gui_refuse_filetransfer  = 3
+      invalid_type             = 4
+      no_authority             = 5
+      unknown_error            = 6
+      header_not_allowed       = 7
+      separator_not_allowed    = 8
+      filesize_not_allowed     = 9
+      header_too_long          = 10
+      dp_error_create          = 11
+      dp_error_send            = 12
+      dp_error_write           = 13
+      unknown_dp_error         = 14
+      access_denied            = 15
+      dp_out_of_memory         = 16
+      disk_full                = 17
+      dp_timeout               = 18
+      file_not_found           = 19
+      dataprovider_exception   = 20
+      control_flush_error      = 21
+      OTHERS                   = 22.
+
+  IF sy-subrc NE 0.
+    MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+            WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+  ENDIF.
+ENDFORM.                    " DOWNLOAD_OUTPUT
+
+*&---------------------------------------------------------------------*
+*&      Form  GUI_DELETE_FILE
+*&---------------------------------------------------------------------*
+*       Delete file
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM gui_delete_file USING lp_filename TYPE string.
+  DATA: lw_rc TYPE i.
+
+  CALL METHOD cl_gui_frontend_services=>file_delete
+    EXPORTING
+      filename             = lp_filename
+    CHANGING
+      rc                   = lw_rc
+    EXCEPTIONS
+      file_delete_failed   = 1
+      cntl_error           = 2
+      error_no_gui         = 3
+      file_not_found       = 4
+      access_denied        = 5
+      unknown_error        = 6
+      not_supported_by_gui = 7
+      wrong_parameter      = 8
+      OTHERS               = 9.
+  IF sy-subrc <> 0.
+    "Do nothing
+  ENDIF.
+ENDFORM.                    " GUI_DELETE_FILE
+
+*&---------------------------------------------------------------------*
+*&      Form  SAVE_OUTPUT
+*&---------------------------------------------------------------------*
+*       Save file to server
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM save_output USING lp_filename TYPE string.
+  DATA: lo_err    TYPE REF TO cx_sy_file_access_error,
+        lw_output TYPE t_output,
+        lw_errmsg TYPE string.
+
+  TRY.
+      OPEN DATASET lp_filename FOR OUTPUT IN TEXT MODE ENCODING DEFAULT.
+      LOOP AT i_output INTO lw_output.
+        TRANSFER lw_output TO lp_filename.
+      ENDLOOP.
+      CLOSE DATASET lp_filename.
+    CATCH cx_sy_file_access_error INTO lo_err.
+      lw_errmsg = lo_err->get_text( ).
+      MESSAGE lw_errmsg TYPE 'E'.
+  ENDTRY.
+ENDFORM.                    " SAVE_OUTPUT
+
+*&---------------------------------------------------------------------*
+*&      Form  GET_POSITION
+*&---------------------------------------------------------------------*
+*       Get position data
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM get_position .
+  DATA: lt_so_buk  TYPE RANGE OF twd01-bukrs,               "#EC NEEDED
+        lt_so_dep  TYPE RANGE OF twd01-rldepo,              "#EC NEEDED
+        lt_so_sid  TYPE RANGE OF vwpanla-ranl,
+        lo_manager TYPE REF TO cl_manager_trs. "TRS manager
+*START INSERTION AS001
+  DATA : li_r_pos_date TYPE RANGE OF tpm_position_date,
+         lw_r_pos_date LIKE LINE OF li_r_pos_date,
+         lw_position   TYPE trss_quantity_position.
+*END INSERTION AS001
+* merge range for security account type into range for security account
+  IF NOT so_sty[] IS INITIAL.
+    lt_so_sid[] = so_sid[].
+    CALL FUNCTION 'SEC_ID_RANGE_MERGE'
+      EXPORTING
+        im_ra_sec_id    = lt_so_sid[]
+        im_ra_prod_type = so_sty[]
+      IMPORTING
+        ex_ra_sec_id    = so_sid[].
+  ENDIF.
+
+* get positions with quantities
+*  lo_manager = cl_manager_trs=>cls_get_trs_manager( ).
+*  CALL METHOD lo_manager->quantity_4_ranges
+*    EXPORTING
+*      im_ra_company_code     = lt_so_buk[]
+*      im_ra_security_account = lt_so_dep[]
+*      im_ra_security_id      = so_sid[]
+*      im_position_date       = p_date
+*      im_flg_no_zero         = p_nozero
+*      im_flg_authority_check = tpmco_xtrue
+*    RECEIVING
+*      re_tab_position        = i_positions.
+
+*** Start of AC002- ***
+*  IF p_sec = 'X' OR p_pos = 'X'.
+*  PERFORM get_position_derivaties.
+*  ENDIF.
+*
+*  IF p_dea = 'X'.
+*  PERFORM get_position_repo.
+*  ENDIF.
+*** End of AC002- ***
+
+*** Start of AC002+ ***
+  SORT so_sid BY low ASCENDING.
+  IF p_sec = 'X' OR p_pos = 'X'.
+    PERFORM get_position_derivatives_new.
+  ENDIF.
+
+  IF p_dea = 'X'.
+    PERFORM get_position_repo_new.
+  ENDIF.
+*** End of AC002+ ***
+*START INSERTION AS001
+*get CSAP position from table ZTR_ATRAS_SMF
+*prepare selection criter
+  IF p_date IS NOT INITIAL.
+
+    lw_r_pos_date-sign   = 'I'.
+    lw_r_pos_date-option = 'EQ'.
+    lw_r_pos_date-low    = p_date.
+
+    APPEND lw_r_pos_date TO li_r_pos_date.
+    CLEAR : lw_r_pos_date.
+  ENDIF.
+
+  SELECT company_code,
+         security_account,
+         secacc_type,
+         security_id,
+         security_account_txt,
+         secacc_type_text,
+         security_id_txt,
+         gsart,
+         ltxkurz,
+         units,
+         nominal_curr,
+         nominal_amt,
+         nominal_org_amt,
+         position_date
+   INTO TABLE @DATA(li_csap_atras_pos)
+   FROM ztr_atras_smf
+   WHERE security_id   IN @so_sid[]
+     AND position_date IN @li_r_pos_date[].
+  IF sy-subrc EQ 0.
+*include CSAP position to GSAP position result
+    LOOP AT li_csap_atras_pos INTO DATA(lw_csap_atras_pos).
+      lw_position-company_code = lw_csap_atras_pos-company_code.
+      lw_position-security_account = lw_csap_atras_pos-security_account.
+      lw_position-security_account_txt = lw_csap_atras_pos-security_account_txt.
+      lw_position-secacc_type = lw_csap_atras_pos-secacc_type.
+      lw_position-secacc_type_text = lw_csap_atras_pos-secacc_type_text.
+      lw_position-security_id_txt = lw_csap_atras_pos-security_id_txt.
+      lw_position-security_id = lw_csap_atras_pos-security_id.
+      lw_position-gsart = lw_csap_atras_pos-gsart.
+      lw_position-ltxkurz = lw_csap_atras_pos-ltxkurz.
+      lw_position-units = lw_csap_atras_pos-units.
+      lw_position-nominal_curr = lw_csap_atras_pos-nominal_curr.
+      lw_position-nominal_amt = lw_csap_atras_pos-nominal_amt.
+      lw_position-nominal_org_amt = lw_csap_atras_pos-nominal_org_amt.
+      lw_position-position_date = lw_csap_atras_pos-position_date.
+
+      APPEND lw_position TO i_positions[].
+      CLEAR : lw_position.
+    ENDLOOP.
+  ENDIF.
+
+  FREE : li_csap_atras_pos,
+         li_r_pos_date.
+*END INSERTION AS001
+* Error message when no position records selected
+  IF i_positions IS INITIAL.
+    IF sy-batch IS INITIAL.
+      MESSAGE i305(trs0) WITH p_date.
+      LEAVE LIST-PROCESSING.
+    ELSE.
+      MESSAGE e305(trs0) WITH p_date.
+    ENDIF.
+  ENDIF.
+
+  IF NOT i_positions IS INITIAL.
+    SORT i_positions BY security_id.
+    DELETE ADJACENT DUPLICATES FROM i_positions COMPARING security_id.
+  ENDIF.
+
+ENDFORM.                    " GET_POSITION
+
+*&---------------------------------------------------------------------*
+*&      Form  GET_POSITION_DERIVATIES
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM get_position_derivaties .
+  DATA: li_para             TYPE TABLE OF rsparams,
+        i_position_quantity TYPE TABLE OF ztrqs_position_quantity,
+        lw_para             TYPE rsparams,
+        lw_pos_qty          TYPE ztrqs_position_quantity,
+        lw_positions        TYPE trss_quantity_position,
+        lv_ret              TYPE sy-subrc.
+
+*** Start of AC001+ ***
+  DATA: l_wa_index_from         TYPE i,
+        l_wa_index_to           TYPE i,
+        l_wa_index_last         TYPE i,
+        l_wa_package_size       TYPE i VALUE 2000,
+        l_tab_position          TYPE trqy_position_obj,
+        l_tab_position_quantity TYPE trqy_position_quantity.
+  RANGES: lr_sty FOR vwpanla-gsart,
+          lr_sid FOR vwpanla-ranl.
+  DATA: lw_sty LIKE LINE OF lr_sty,
+        lw_sid LIKE LINE OF lr_sid.
+
+*** End of  AC001+ ***
+  DATA: lv_repid TYPE sy-repid.
+  REFRESH i_tab.
+  CLEAR lv_ret.
+  lv_repid = 'RTPM_TRQ_SHOW_POSITIONS'.
+
+  CALL FUNCTION 'RS_REFRESH_FROM_SELECTOPTIONS'
+    EXPORTING
+      curr_report     = lv_repid
+    TABLES
+      selection_table = li_para
+    EXCEPTIONS
+      not_found       = 1
+      no_report       = 2
+      OTHERS          = 3.
+  IF sy-subrc <> 0.
+    MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+            WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+  ENDIF.
+
+  DELETE li_para WHERE selname = 'P_FILE'.
+
+*--> Product Group - Listed Derivaties
+  CLEAR lw_para.
+  READ TABLE li_para INTO lw_para WITH KEY selname = 'P_POS'.
+  IF sy-subrc = 0.
+    lw_para-sign   = 'I'.
+    lw_para-option = 'EQ'.
+*    lw_para-low    = 'X'. "AC001-
+    lw_para-low    = p_pos.
+    APPEND lw_para TO i_tab.
+  ENDIF.
+
+*** Start of AC001+ ***
+  CLEAR lw_para.
+  READ TABLE li_para INTO lw_para WITH KEY selname = 'P_DEA'.
+  IF sy-subrc = 0.
+    lw_para-sign   = 'I'.
+    lw_para-option = 'EQ'.
+    lw_para-low    = ''.
+    APPEND lw_para TO i_tab.
+  ENDIF.
+
+  CLEAR lw_para.
+  READ TABLE li_para INTO lw_para WITH KEY selname = 'P_SEC'.
+  IF sy-subrc = 0.
+    lw_para-sign   = 'I'.
+    lw_para-option = 'EQ'.
+*    lw_para-low    = 'X'. "AC001-
+    lw_para-low    = p_sec. "AC001+
+    APPEND lw_para TO i_tab.
+  ENDIF.
+*** End of  AC001+ ***
+
+*--> Key Date
+  CLEAR lw_para.
+  READ TABLE li_para INTO lw_para WITH KEY selname = 'P_DAT2'.
+  IF sy-subrc = 0.
+    lw_para-sign   = 'I'.
+    lw_para-option = 'EQ'.
+    lw_para-low    = p_date.
+    APPEND lw_para TO i_tab.
+  ENDIF.
+
+*--> Security ID
+*** Start of AC001- ***
+*  CLEAR lw_para.
+*  IF NOT so_sid IS INITIAL.
+*    READ TABLE li_para INTO lw_para WITH KEY selname = 'SO_RANL'.
+*    IF sy-subrc = 0.
+*      LOOP AT so_sid.
+*        lw_para-sign   = so_sid-sign.
+*        lw_para-option = so_sid-option.
+*        lw_para-low    = so_sid-low.
+*        lw_para-high   = so_sid-high.
+*        APPEND lw_para TO i_tab.
+*      ENDLOOP.
+*    ENDIF.
+*  ENDIF.
+*** End of  AC001- ***
+
+*** Start of AC001- ***
+*--> Product Type
+*  CLEAR lw_para.
+*  IF NOT so_sty IS INITIAL.
+*    READ TABLE li_para INTO lw_para WITH KEY selname = 'SO_PT'.
+*    IF sy-subrc = 0.
+*      LOOP AT so_sty.
+*        lw_para-sign   = so_sty-sign.
+*        lw_para-option = so_sty-option.
+*        lw_para-low    = so_sty-low.
+*        lw_para-high   = so_sty-high.
+*        APPEND lw_para TO i_tab.
+*      ENDLOOP.
+*    ENDIF.
+*  ENDIF.
+*** End of  AC001- ***
+
+*--> No Zero Positions
+  CLEAR lw_para.
+  READ TABLE li_para INTO lw_para WITH KEY selname = 'P_NOZ'.
+  IF sy-subrc = 0.
+    lw_para-sign   = 'I'.
+    lw_para-option = 'EQ'.
+    lw_para-low    = p_nozero.
+    APPEND lw_para TO i_tab.
+  ENDIF.
+
+*** Start of AC001+ ***
+*--> Overwrite user profile setting - not validate
+  CLEAR lw_para.
+  lw_para-selname = 'P_OV'.
+  lw_para-kind = 'P'.
+  lw_para-sign   = 'I'.
+  lw_para-option = 'EQ'.
+  lw_para-low    = 'X'.
+  APPEND lw_para TO i_tab.
+*** End of  AC001+ ***
+
+**>program ztri5009d will export results to data cluster
+  IF NOT sy-batch IS INITIAL.  "only for background
+    CLEAR lw_para.
+    lw_para-selname = 'P_SUBB'.
+    lw_para-sign   = 'I'.
+    lw_para-option = 'EQ'.
+    lw_para-low    = 'X'.
+    APPEND lw_para TO i_tab.
+**schedule a job immediately for ztri5009d
+*** Start of AC001+ ***
+    IF NOT so_sid[] IS INITIAL.
+      SORT so_sid BY low.
+      DELETE ADJACENT DUPLICATES FROM so_sid COMPARING low.
+      REFRESH lr_sid.
+      l_wa_index_from   = 1.
+      DESCRIBE TABLE so_sid LINES l_wa_index_last.
+      WHILE l_wa_index_from LE l_wa_index_last.
+        l_wa_index_to = l_wa_index_from + p_size - 1.
+        IF l_wa_index_to GT l_wa_index_last.
+          l_wa_index_to = l_wa_index_last.
+        ELSEIF l_wa_index_to LT l_wa_index_from.
+          l_wa_index_to = l_wa_index_from.
+        ENDIF.
+        CLEAR l_tab_position.
+
+        APPEND LINES OF so_sid
+               FROM l_wa_index_from TO l_wa_index_to
+               TO lr_sid.
+
+*--> Product Type
+        CLEAR lw_para.
+        READ TABLE li_para INTO lw_para WITH KEY selname = 'SO_RANL'.
+        IF sy-subrc = 0.
+          LOOP AT lr_sid.
+            lw_para-sign   = lr_sid-sign.
+            lw_para-option = lr_sid-option.
+            lw_para-low    = lr_sid-low.
+            lw_para-high   = lr_sid-high.
+            APPEND lw_para TO i_tab.
+          ENDLOOP.
+        ENDIF.
+        PERFORM create_job CHANGING lv_ret.
+        DELETE i_tab WHERE selname EQ 'SO_RANL'.
+
+        IF lv_ret EQ 0. " if there is job error then the routine after this will handle the error handling
+          CLEAR i_position_quantity[].
+*  * get from data cluster
+          IF NOT sy-batch IS INITIAL.  "only for background
+            IMPORT i_position_quantity = i_position_quantity
+            FROM DATABASE indx(st)
+            TO w_indx ID 'ZZPOSITBB'.
+            DELETE FROM DATABASE indx(st) ID 'ZZPOSITBB'. "Remove keys
+          ELSE.
+            IMPORT i_position_quantity FROM MEMORY ID 'ZZPOSIT'.
+            FREE MEMORY ID 'ZZPOSIT'.
+          ENDIF.
+
+          IF NOT i_position_quantity IS INITIAL.
+            SORT i_position_quantity BY security_id.
+            DELETE ADJACENT DUPLICATES FROM i_position_quantity COMPARING security_id.
+
+            LOOP AT i_position_quantity INTO lw_pos_qty.
+              MOVE-CORRESPONDING lw_pos_qty TO lw_positions.
+              lw_positions-position_date = p_date. "OW001+
+              APPEND lw_positions TO i_positions.
+              CLEAR: lw_pos_qty, lw_positions.
+            ENDLOOP.
+          ENDIF.
+        ENDIF.
+
+        FREE:
+          lr_sid.
+        l_wa_index_from = l_wa_index_to + 1.
+      ENDWHILE.
+*** End of  AC001+ ***
+    ELSE.
+      PERFORM create_job CHANGING lv_ret.
+    ENDIF.
+  ELSE.
+*** Start of AC001+ ***
+*--> Product Type
+    CLEAR lw_para.
+    IF NOT so_sty IS INITIAL.
+      READ TABLE li_para INTO lw_para WITH KEY selname = 'SO_PT'.
+      IF sy-subrc = 0.
+        LOOP AT so_sty.
+          lw_para-sign   = so_sty-sign.
+          lw_para-option = so_sty-option.
+          lw_para-low    = so_sty-low.
+          lw_para-high   = so_sty-high.
+          APPEND lw_para TO i_tab.
+        ENDLOOP.
+      ENDIF.
+    ENDIF.
+*** End of  AC001+ ***
+    SUBMIT ztri5009d WITH SELECTION-TABLE i_tab
+                     AND RETURN.
+  ENDIF.
+
+*  IF lv_ret EQ 0. " if there is job error then the routine after this will handle the error handling "AC001-
+  IF sy-batch IS INITIAL. "AC001+
+    CLEAR i_position_quantity[].
+** get from data cluster
+    IF NOT sy-batch IS INITIAL.  "only for background
+      IMPORT i_position_quantity = i_position_quantity
+      FROM DATABASE indx(st)
+      TO w_indx ID 'ZZPOSITBB'.
+      DELETE FROM DATABASE indx(st) ID 'ZZPOSITBB'. "Remove keys
+    ELSE.
+      IMPORT i_position_quantity FROM MEMORY ID 'ZZPOSIT'.
+      FREE MEMORY ID 'ZZPOSIT'.
+    ENDIF.
+
+    IF NOT i_position_quantity IS INITIAL.
+      SORT i_position_quantity BY security_id.
+      DELETE ADJACENT DUPLICATES FROM i_position_quantity COMPARING security_id.
+
+      LOOP AT i_position_quantity INTO lw_pos_qty.
+        MOVE-CORRESPONDING lw_pos_qty TO lw_positions.
+        lw_positions-position_date = p_date. "OW001+
+        APPEND lw_positions TO i_positions.
+        CLEAR: lw_pos_qty, lw_positions.
+      ENDLOOP.
+    ENDIF.
+*** Start of AC001- ***
+*  ELSE.
+***job failure? or unable to start job ZTR_MC_E0003
+*    IF sy-batch IS INITIAL.
+*      MESSAGE i013.
+*      LEAVE LIST-PROCESSING.
+*    ELSE.
+*      MESSAGE e013.
+*    ENDIF.
+*** End of  AC001- ***
+  ENDIF.
+ENDFORM.                    " GET_POSITION_DERIVATIES
+
+*&---------------------------------------------------------------------*
+*&      Form  CREATE_JOB
+*&---------------------------------------------------------------------*
+*       Create a new job for program ZTRI5009D
+*----------------------------------------------------------------------*
+*      <--P_RET  text
+*----------------------------------------------------------------------*
+FORM create_job CHANGING p_ret.
+  CLEAR: v_name, v_number.
+**start of new job for ZTRI5009D
+  v_name = 'ZTRI5022_DOWNLOAD'.
+
+  CONCATENATE v_name v_time INTO v_name SEPARATED BY '_'.
+  CALL FUNCTION 'JOB_OPEN'
+    EXPORTING
+      jobname          = v_name
+      jobclass         = 'A'
+    IMPORTING
+      jobcount         = v_number
+    EXCEPTIONS
+      cant_create_job  = 1
+      invalid_job_data = 2
+      jobname_missing  = 3
+      OTHERS           = 4.
+
+  IF sy-subrc = 0.
+**submit program under new bg job
+    SUBMIT ztri5009d WITH SELECTION-TABLE i_tab
+                     TO SAP-SPOOL
+                     SPOOL PARAMETERS v_print_parameters
+                     WITHOUT SPOOL DYNPRO
+                     WITH immediately = 'X' ##SUB_PAR
+                     VIA JOB v_name NUMBER v_number
+                     AND RETURN.
+
+    IF sy-subrc EQ 0.
+      CALL FUNCTION 'JOB_CLOSE'
+        EXPORTING
+          jobcount             = v_number
+          jobname              = v_name
+          strtimmed            = 'X'
+        EXCEPTIONS
+          cant_start_immediate = 1
+          invalid_startdate    = 2
+          jobname_missing      = 3
+          job_close_failed     = 4
+          job_nosteps          = 5
+          job_notex            = 6
+          lock_failed          = 7
+          OTHERS               = 8.
+
+**successfull!
+      IF sy-subrc EQ 0.
+**generate a timer-> get the result
+        PERFORM timer CHANGING p_ret.
+      ELSE.
+**error
+        p_ret = sy-subrc.
+      ENDIF.
+    ELSE.
+**error
+      p_ret = sy-subrc.
+    ENDIF.
+  ELSE.
+**error
+    p_ret = sy-subrc.
+  ENDIF.
+ENDFORM.                    " CREATE_JOB
+
+*&---------------------------------------------------------------------*
+*&      Form  TIMER
+*&---------------------------------------------------------------------*
+*       listener to check schedule job finish
+*----------------------------------------------------------------------*
+*      <--P_RET  text
+*----------------------------------------------------------------------*
+FORM timer CHANGING p_ret.
+*** Start of AC001+ ***
+  DATA: lv_complete(1) TYPE c,
+        lv_fin         LIKE tbtcv-fin,
+        lv_abort       LIKE tbtcv-abort.
+  DO.
+    IF lv_complete = 'X'.
+      EXIT.
+    ENDIF.
+
+    CLEAR lv_complete.
+    CALL FUNCTION 'SHOW_JOBSTATE'
+      EXPORTING
+        jobcount         = v_number
+        jobname          = v_name
+      IMPORTING
+        finished         = lv_fin
+        aborted          = lv_abort
+      EXCEPTIONS
+        jobcount_missing = 1
+        jobname_missing  = 2
+        job_notex        = 3
+        OTHERS           = 4.
+    IF sy-subrc = 0.
+      IF lv_fin IS NOT INITIAL.
+        lv_complete = 'X'.
+      ENDIF.
+      IF lv_abort IS NOT INITIAL.
+        p_ret = 4.
+        lv_complete = 'X'.
+      ENDIF.
+    ELSE.
+      EXIT.
+    ENDIF.
+  ENDDO.
+*** End of  AC001+ ***
+*** Start of AC001- ***
+***listener to listen split job status
+*  CLEAR v_status.
+*  WAIT UP TO 60 SECONDS. "1 MIN
+***listener- check if job is finish?
+*  SELECT SINGLE status FROM tbtco INTO v_status
+*    WHERE jobname  = v_name AND
+*          jobcount = v_number.
+***can find the job
+*  IF sy-subrc EQ 0.
+*    IF v_status NE 'F' AND "not finished?
+*       v_status NE 'A'.    "not aborted?
+*      PERFORM timer CHANGING p_ret.
+*    ELSEIF v_status = 'A'.
+*      p_ret = 4. "aborted? unsuccessfull
+*    ENDIF.
+*  ELSE.
+***cannot find
+*    p_ret = sy-subrc.
+*  ENDIF.
+*** End of  AC001- ***
+ENDFORM.                    " TIMER
+
+*&---------------------------------------------------------------------*
+*&      Form  GET_POSITION_REPO
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM get_position_repo .
+  DATA: li_para             TYPE TABLE OF rsparams,
+        i_position_quantity TYPE TABLE OF ztrqs_position_quantity,
+        lw_para             TYPE rsparams,
+        lw_pos_qty          TYPE ztrqs_position_quantity,
+        lw_positions        TYPE trss_quantity_position,
+        lv_ret              TYPE sy-subrc,
+        lw_repo             TYPE t_repo,
+        li_prod_type        TYPE STANDARD TABLE OF t_prod_type,
+        lw_prod_type        LIKE LINE OF li_prod_type.
+
+  DATA: lv_repid TYPE sy-repid.
+  REFRESH: i_tab, i_repo.
+  CLEAR lv_ret.
+
+  lv_repid = 'RTPM_TRQ_SHOW_POSITIONS'.
+
+  CALL FUNCTION 'RS_REFRESH_FROM_SELECTOPTIONS'
+    EXPORTING
+      curr_report     = lv_repid
+    TABLES
+      selection_table = li_para
+    EXCEPTIONS
+      not_found       = 1
+      no_report       = 2
+      OTHERS          = 3.
+  IF sy-subrc <> 0.
+    MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+            WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+  ENDIF.
+
+  DELETE li_para WHERE selname = 'P_FILE'.
+
+*--> Product Group - Listed Derivaties
+  CLEAR lw_para.
+  READ TABLE li_para INTO lw_para WITH KEY selname = 'P_SEC'.
+  IF sy-subrc = 0.
+    lw_para-sign   = 'I'.
+    lw_para-option = 'EQ'.
+    lw_para-low    = ''.
+    APPEND lw_para TO i_tab.
+  ENDIF.
+
+*** Start of AC001+ ***
+  CLEAR lw_para.
+  READ TABLE li_para INTO lw_para WITH KEY selname = 'P_POS'.
+  IF sy-subrc = 0.
+    lw_para-sign   = 'I'.
+    lw_para-option = 'EQ'.
+    lw_para-low    = ''.
+    APPEND lw_para TO i_tab.
+  ENDIF.
+*** End of  AC001+ ***
+
+  CLEAR lw_para.
+  READ TABLE li_para INTO lw_para WITH KEY selname = 'P_DEA'.
+  IF sy-subrc = 0.
+    lw_para-sign   = 'I'.
+    lw_para-option = 'EQ'.
+    lw_para-low    = 'X'.
+    APPEND lw_para TO i_tab.
+  ENDIF.
+
+*--> Key Date
+  CLEAR lw_para.
+  READ TABLE li_para INTO lw_para WITH KEY selname = 'P_DAT2'.
+  IF sy-subrc = 0.
+    lw_para-sign   = 'I'.
+    lw_para-option = 'EQ'.
+    lw_para-low    = p_date.
+    APPEND lw_para TO i_tab.
+  ENDIF.
+
+*--> Product Type
+  CLEAR lw_para.
+  READ TABLE li_para INTO lw_para WITH KEY selname = 'SO_PT'.
+  IF sy-subrc = 0.
+    SELECT gsart
+      INTO TABLE li_prod_type
+      FROM ztr_prodtype.
+
+    IF sy-subrc EQ 0.
+      LOOP AT li_prod_type INTO lw_prod_type.
+        lw_para-sign   = 'I'.
+        lw_para-option = 'EQ'.
+        lw_para-low    = lw_prod_type-gsart.
+        APPEND lw_para TO i_tab.
+
+        CLEAR: lw_prod_type.
+      ENDLOOP.
+    ENDIF.
+  ENDIF.
+
+*--> No Zero Positions
+  CLEAR lw_para.
+  READ TABLE li_para INTO lw_para WITH KEY selname = 'P_NOZ'.
+  IF sy-subrc = 0.
+    lw_para-sign   = 'I'.
+    lw_para-option = 'EQ'.
+    lw_para-low    = p_nozero.
+    APPEND lw_para TO i_tab.
+  ENDIF.
+
+*--> Overwrite user profile setting - not validate
+  CLEAR lw_para.
+  lw_para-selname = 'P_OV'.
+  lw_para-kind = 'P'.
+  lw_para-sign   = 'I'.
+  lw_para-option = 'EQ'.
+  lw_para-low    = 'X'.
+  APPEND lw_para TO i_tab.
+
+**>program ztri5009d will export results to data cluster
+  IF NOT sy-batch IS INITIAL.  "only for background
+    CLEAR lw_para.
+    lw_para-selname = 'P_SUBB'.
+    lw_para-sign   = 'I'.
+    lw_para-option = 'EQ'.
+    lw_para-low    = 'X'.
+    APPEND lw_para TO i_tab.
+**schedule a job immediately for ztri5009d
+    PERFORM create_job CHANGING lv_ret.
+  ELSE.
+    SUBMIT ztri5009d WITH SELECTION-TABLE i_tab
+                     AND RETURN.
+  ENDIF.
+
+  IF lv_ret EQ 0. " if there is job error then the routine after this will handle the error handling
+    CLEAR i_position_quantity[].
+** get from data cluster
+    IF NOT sy-batch IS INITIAL.  "only for background
+      IMPORT i_position_quantity = i_position_quantity
+      FROM DATABASE indx(st)
+      TO w_indx ID 'ZZPOSITBB'.
+      DELETE FROM DATABASE indx(st) ID 'ZZPOSITBB'. "Remove keys
+    ELSE.
+      IMPORT i_position_quantity FROM MEMORY ID 'ZZPOSIT'.
+      FREE MEMORY ID 'ZZPOSIT'.
+    ENDIF.
+
+    IF NOT i_position_quantity IS INITIAL.
+      SORT i_position_quantity BY company_code deal_number.
+      DELETE ADJACENT DUPLICATES FROM i_position_quantity COMPARING company_code deal_number.
+
+      SELECT bukrs rfha ranl
+        INTO TABLE i_repo
+        FROM vtbfha
+        FOR ALL ENTRIES IN i_position_quantity
+       WHERE bukrs EQ i_position_quantity-company_code
+         AND rfha EQ i_position_quantity-deal_number.
+*         AND ranl IN so_sid. "OW001+ "AC001-
+
+      IF sy-subrc EQ 0.
+        DELETE i_repo WHERE ranl NOT IN so_sid. "AC001+
+        LOOP AT i_position_quantity INTO lw_pos_qty.
+          READ TABLE i_repo INTO lw_repo WITH KEY bukrs = lw_pos_qty-company_code
+                                                  rfha = lw_pos_qty-deal_number.
+          IF sy-subrc EQ 0.
+            MOVE-CORRESPONDING lw_pos_qty TO lw_positions.
+            lw_positions-security_id = lw_repo-ranl.
+            lw_positions-position_date = p_date. "OW001+
+            APPEND lw_positions TO i_positions.
+          ENDIF.
+
+          CLEAR: lw_pos_qty, lw_positions, lw_repo.
+        ENDLOOP.
+      ENDIF.
+    ENDIF.
+  ELSE.
+**job failure? or unable to start job ZTR_MC_E0003
+    IF sy-batch IS INITIAL.
+      MESSAGE i013.
+      LEAVE LIST-PROCESSING.
+    ELSE.
+      MESSAGE e013.
+    ENDIF.
+  ENDIF.
+ENDFORM.                    " GET_POSITION_REPO
+
+
+*&---------------------------------------------------------------------*
+*&      Form  PREPARE_OUTPUT
+*&---------------------------------------------------------------------*
+*       Prepare output data
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM prepare_output .
+  DATA: lw_positions TYPE trss_quantity_position,
+        lw_output    TYPE t_output,
+        lv_units     TYPE string,
+        lv_namt      TYPE string,
+        lv_namtorg   TYPE string.
+
+  LOOP AT i_positions INTO lw_positions.
+    lv_units = lw_positions-units.
+    CONDENSE lv_units.
+
+    lv_namt = lw_positions-nominal_amt.
+    CONDENSE lv_namt.
+
+    lv_namtorg = lw_positions-nominal_org_amt.
+    CONDENSE lv_namtorg.
+
+    CONCATENATE lw_positions-company_code c_sep
+                lw_positions-security_account c_sep
+                lw_positions-security_account_txt c_sep
+                lw_positions-secacc_type c_sep
+                lw_positions-secacc_type_text c_sep
+                lw_positions-security_id_txt c_sep
+                lw_positions-security_id c_sep
+                lw_positions-gsart c_sep
+                lw_positions-ltxkurz c_sep
+                lv_units c_sep
+                lw_positions-nominal_curr c_sep
+                lv_namt c_sep
+                lv_namtorg c_sep
+                lw_positions-position_date c_sep
+           INTO lw_output.
+
+    COLLECT lw_output INTO i_output.
+    CLEAR: lw_positions, lw_output,
+           lv_units, lv_namt, lv_namtorg.
+  ENDLOOP.
+
+  IF i_output[] IS INITIAL.
+    IF sy-batch IS INITIAL.
+      MESSAGE i031(ztr_mc_e0003) WITH TEXT-h01.
+      LEAVE LIST-PROCESSING.
+    ELSE.
+      MESSAGE e031(ztr_mc_e0003) WITH TEXT-h01.
+    ENDIF.
+  ENDIF.
+ENDFORM.                    " PREPARE_OUTPUT
+
+*** Start of AC001+ ***
+*&---------------------------------------------------------------------*
+*&      Form  POPULATE_PRODUCTS
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM populate_products.
+  IF p_sec IS NOT INITIAL AND p_pos IS NOT INITIAL.
+    IF so_sty IS INITIAL.
+      so_sty-sign = 'I'.
+      so_sty-option = 'EQ'.
+      so_sty-low = 'ABS'. APPEND so_sty.
+      so_sty-low = 'ANI'. APPEND so_sty.
+      so_sty-low = 'BAR'. APPEND so_sty.
+      so_sty-low = 'BEO'. APPEND so_sty.
+      so_sty-low = 'BEX'. APPEND so_sty.
+      so_sty-low = 'BNF'. APPEND so_sty.
+      so_sty-low = 'BNI'. APPEND so_sty.
+      so_sty-low = 'BNS'. APPEND so_sty.
+      so_sty-low = 'BNU'. APPEND so_sty.
+      so_sty-low = 'BNV'. APPEND so_sty.
+      so_sty-low = 'BSN'. APPEND so_sty.
+      so_sty-low = 'CBB'. APPEND so_sty.
+      so_sty-low = 'CDN'. APPEND so_sty.
+      so_sty-low = 'CDO'. APPEND so_sty.
+      so_sty-low = 'CPB'. APPEND so_sty.
+      so_sty-low = 'ETF'. APPEND so_sty.
+      so_sty-low = 'MBS'. APPEND so_sty.
+      so_sty-low = 'MFH'. APPEND so_sty.
+      so_sty-low = 'MFL'. APPEND so_sty.
+      so_sty-low = 'MFM'. APPEND so_sty.
+      so_sty-low = 'MFN'. APPEND so_sty.
+      so_sty-low = 'MMF'. APPEND so_sty.
+      so_sty-low = 'MTN'. APPEND so_sty.
+      so_sty-low = 'NDL'. APPEND so_sty.
+      so_sty-low = 'PBS'. APPEND so_sty.
+      so_sty-low = 'PNR'. APPEND so_sty.
+      so_sty-low = 'SHA'. APPEND so_sty.
+      so_sty-low = 'SRT'. APPEND so_sty.
+      so_sty-low = 'WRB'. APPEND so_sty.
+      so_sty-low = 'WRC'. APPEND so_sty.
+      so_sty-low = 'WRE'. APPEND so_sty.
+      so_sty-low = 'WRI'. APPEND so_sty.
+      so_sty-low = 'WRO'. APPEND so_sty.
+      so_sty-low = 'ZCB'. APPEND so_sty.
+      so_sty-low = 'EQO'. APPEND so_sty.
+      so_sty-low = 'FXF'. APPEND so_sty.
+      so_sty-low = 'IDF'. APPEND so_sty.
+      so_sty-low = 'IDO'. APPEND so_sty.
+      so_sty-low = 'NLT'. APPEND so_sty. "KX001+
+    ENDIF.
+  ELSEIF p_sec IS NOT INITIAL AND p_pos IS INITIAL.
+    IF so_sty IS INITIAL.
+      so_sty-sign = 'I'.
+      so_sty-option = 'EQ'.
+      so_sty-low = 'ABS'. APPEND so_sty.
+      so_sty-low = 'ANI'. APPEND so_sty.
+      so_sty-low = 'BAR'. APPEND so_sty.
+      so_sty-low = 'BEO'. APPEND so_sty.
+      so_sty-low = 'BEX'. APPEND so_sty.
+      so_sty-low = 'BNF'. APPEND so_sty.
+      so_sty-low = 'BNI'. APPEND so_sty.
+      so_sty-low = 'BNS'. APPEND so_sty.
+      so_sty-low = 'BNU'. APPEND so_sty.
+      so_sty-low = 'BNV'. APPEND so_sty.
+      so_sty-low = 'BSN'. APPEND so_sty.
+      so_sty-low = 'CBB'. APPEND so_sty.
+      so_sty-low = 'CDN'. APPEND so_sty.
+      so_sty-low = 'CDO'. APPEND so_sty.
+      so_sty-low = 'CPB'. APPEND so_sty.
+      so_sty-low = 'ETF'. APPEND so_sty.
+      so_sty-low = 'MBS'. APPEND so_sty.
+      so_sty-low = 'MFH'. APPEND so_sty.
+      so_sty-low = 'MFL'. APPEND so_sty.
+      so_sty-low = 'MFM'. APPEND so_sty.
+      so_sty-low = 'MFN'. APPEND so_sty.
+      so_sty-low = 'MMF'. APPEND so_sty.
+      so_sty-low = 'MTN'. APPEND so_sty.
+      so_sty-low = 'NDL'. APPEND so_sty.
+      so_sty-low = 'PBS'. APPEND so_sty.
+      so_sty-low = 'PNR'. APPEND so_sty.
+      so_sty-low = 'SHA'. APPEND so_sty.
+      so_sty-low = 'SRT'. APPEND so_sty.
+      so_sty-low = 'WRB'. APPEND so_sty.
+      so_sty-low = 'WRC'. APPEND so_sty.
+      so_sty-low = 'WRE'. APPEND so_sty.
+      so_sty-low = 'WRI'. APPEND so_sty.
+      so_sty-low = 'WRO'. APPEND so_sty.
+      so_sty-low = 'ZCB'. APPEND so_sty.
+      so_sty-low = 'NLT'. APPEND so_sty. "KX001+
+    ENDIF.
+  ELSEIF p_sec IS INITIAL AND p_pos IS NOT INITIAL.
+    IF so_sty IS INITIAL.
+      so_sty-sign = 'I'.
+      so_sty-option = 'EQ'.
+      so_sty-low = 'EQO'. APPEND so_sty.
+      so_sty-low = 'FXF'. APPEND so_sty.
+      so_sty-low = 'IDF'. APPEND so_sty.
+      so_sty-low = 'IDO'. APPEND so_sty.
+    ENDIF.
+  ENDIF.
+ENDFORM.
+*** End of  AC001+ ***
+
+*** Start of AC002+ ***
+*&---------------------------------------------------------------------*
+*&      Form  GET_POSITION_REPO_NEW
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM get_position_repo_new.
+  DATA: li_position_quantity TYPE TABLE OF ztrqs_position_quantity,
+        lw_positions         TYPE trss_quantity_position.
+
+  DATA: li_prod_type TYPE STANDARD TABLE OF t_prod_type,
+        lw_prod_type LIKE LINE OF li_prod_type,
+        li_so_sty    TYPE RANGE OF vwpanla-gsart,
+        lw_so_sty    LIKE LINE OF li_so_sty.
+
+  REFRESH li_so_sty.
+  SELECT gsart
+    INTO TABLE li_prod_type
+    FROM ztr_prodtype.
+
+  IF sy-subrc EQ 0.
+    LOOP AT li_prod_type INTO lw_prod_type.
+      lw_so_sty-sign   = 'I'.
+      lw_so_sty-option = 'EQ'.
+      lw_so_sty-low    = lw_prod_type-gsart.
+      APPEND lw_so_sty TO li_so_sty.
+
+      CLEAR: lw_prod_type.
+    ENDLOOP.
+  ENDIF.
+
+  CALL FUNCTION 'ZFM_TPM26'
+    EXPORTING
+      p_sec               = space
+      p_pos               = space
+      p_dea               = 'X'
+      p_noz               = p_nozero
+      p_date              = p_date
+      so_pt               = li_so_sty
+    IMPORTING
+      i_position_quantity = li_position_quantity.
+
+  IF NOT li_position_quantity IS INITIAL.
+    SORT li_position_quantity BY company_code DESCENDING deal_number DESCENDING.
+    DELETE ADJACENT DUPLICATES FROM li_position_quantity COMPARING company_code deal_number.
+
+    SELECT bukrs rfha ranl
+      INTO TABLE i_repo
+      FROM vtbfha
+      FOR ALL ENTRIES IN li_position_quantity
+     WHERE bukrs EQ li_position_quantity-company_code
+       AND rfha EQ li_position_quantity-deal_number.
+
+    IF sy-subrc EQ 0.
+      DELETE i_repo WHERE ranl NOT IN so_sid.
+      LOOP AT li_position_quantity INTO DATA(lw_pos_qty).
+        READ TABLE i_repo INTO DATA(lw_repo) WITH KEY bukrs = lw_pos_qty-company_code
+                                                rfha = lw_pos_qty-deal_number.
+        IF sy-subrc EQ 0.
+          MOVE-CORRESPONDING lw_pos_qty TO lw_positions.
+          lw_positions-security_id = lw_repo-ranl.
+          lw_positions-position_date = p_date.
+          APPEND lw_positions TO i_positions.
+        ENDIF.
+
+        CLEAR: lw_pos_qty, lw_positions, lw_repo.
+      ENDLOOP.
+    ENDIF.
+  ENDIF.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  GET_POSITION_DERIVATIVES_NEW
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM get_position_derivatives_new.
+  DATA: li_para      TYPE TABLE OF rsparams,
+
+        lw_para      TYPE rsparams,
+        lw_pos_qty   TYPE ztrqs_position_quantity,
+        lw_positions TYPE trss_quantity_position,
+        lv_ret       TYPE sy-subrc.
+
+  DATA: l_wa_index_from         TYPE i,
+        l_wa_index_to           TYPE i,
+        l_wa_index_last         TYPE i,
+        l_wa_package_size       TYPE i VALUE 2000,
+        l_tab_position          TYPE trqy_position_obj,
+        l_tab_position_quantity TYPE trqy_position_quantity.
+
+  DATA: li_so_sid TYPE RANGE OF vwpanla-ranl,
+        li_so_sty TYPE RANGE OF vwpanla-gsart,
+        lw_so_sty LIKE LINE OF li_so_sty.
+
+  DATA: li_pt TYPE trgr_product_type,
+        lw_pt LIKE LINE OF li_pt.
+  DATA: w_position_quantity TYPE ztrqs_position_quantity.
+  DATA: w_position   TYPE trqs_position_quantity.
+  DATA: li_output TYPE trqy_position_quantity.
+
+
+  CALL FUNCTION 'SPBT_INITIALIZE'
+    EXPORTING
+      group_name                     = p_appsvr
+    IMPORTING
+      max_pbt_wps                    = gv_total
+      free_pbt_wps                   = gv_available
+    EXCEPTIONS
+      invalid_group_name             = 1
+      internal_error                 = 2
+      pbt_env_already_initialized    = 3
+      currently_no_resources_avail   = 4
+      no_pbt_resources_found         = 5
+      cant_init_different_pbt_groups = 6
+      OTHERS                         = 7.
+  IF sy-subrc = 0.
+    gv_occupied = gv_total - gv_available.
+    gv_diff = ( gv_available * 100 ) / gv_total.
+
+    IF gv_diff <= 25.
+      gv_split = gv_available DIV 2.
+    ELSEIF gv_diff BETWEEN 25 AND 50.
+      gv_split = gv_available * 2 DIV 3.
+    ELSEIF gv_diff >= 50.
+      gv_split = gv_available * 3 DIV 4.
+    ENDIF.
+  ELSE.
+    MESSAGE i024(zaia) WITH 'SPBT_INITIALIZE failed' ##NO_TEXT.
+  ENDIF.
+
+  IF NOT so_sid[] IS INITIAL.
+    SORT so_sid BY low.
+    DELETE ADJACENT DUPLICATES FROM so_sid COMPARING low.
+
+    gv_lines = lines( so_sid ).
+    gv_lines_tab = gv_lines / gv_split.
+
+    IF gv_lines < gv_split.
+      gv_split = 1.
+    ENDIF.
+
+    DO gv_split TIMES.
+      gv_index = sy-index.
+      CONCATENATE 'Task' gv_index INTO gv_task ##NO_TEXT.
+
+      gv_start = gv_start + gv_lines_tab.
+      gv_end = gv_lines_tab + 1.
+
+      IF gv_index = 1.
+        gv_start = 0.
+      ENDIF.
+
+      IF gv_split = gv_index.
+        gv_end = 0.
+      ENDIF.
+
+      li_so_sid[] = so_sid[].
+
+      IF gv_start IS NOT INITIAL.
+        DELETE li_so_sid TO gv_start.
+      ENDIF.
+
+      IF gv_end IS NOT INITIAL.
+        DELETE li_so_sid FROM gv_end.
+      ENDIF.
+
+      CALL FUNCTION 'ZFM_TPM26' STARTING NEW TASK gv_task DESTINATION IN GROUP p_appsvr
+        PERFORMING get_result ON END OF TASK
+        EXPORTING
+          p_sec   = p_sec
+          p_pos   = p_pos
+          p_dea   = space
+          p_noz   = p_nozero
+          p_date  = p_date
+          so_ranl = li_so_sid.
+
+      IF sy-subrc EQ 0 ##FM_SUBRC_OK.
+        gv_sent = gv_sent + 1.
+      ENDIF.
+    ENDDO.
+
+    WAIT UNTIL gv_comp >= gv_sent.
+    WRITE: / 'Total Task(s)' ##NO_TEXT, gv_split,
+             'Total Sent' ##NO_TEXT, gv_sent,
+             'Total Completed' ##NO_TEXT, gv_comp.
+  ENDIF.
+
+  IF NOT i_position_quantity IS INITIAL.
+
+    SORT i_position_quantity BY company_code DESCENDING security_id DESCENDING security_account DESCENDING.
+    DELETE ADJACENT DUPLICATES FROM i_position_quantity COMPARING company_code security_id security_account.
+
+    LOOP AT i_position_quantity INTO lw_pos_qty.
+      MOVE-CORRESPONDING lw_pos_qty TO lw_positions.
+      lw_positions-position_date = p_date.
+      APPEND lw_positions TO i_positions.
+      CLEAR: lw_pos_qty, lw_positions.
+    ENDLOOP.
+  ENDIF.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*&      Form  GET_RESULT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM get_result USING lv_task.
+  DATA: li_position_quantity TYPE TABLE OF ztrqs_position_quantity.
+
+  REFRESH li_position_quantity.
+
+  gv_comp = gv_comp + 1.
+  RECEIVE RESULTS FROM FUNCTION 'ZFM_TPM26'
+  IMPORTING
+    i_position_quantity = li_position_quantity.
+
+  IF li_position_quantity IS NOT INITIAL.
+    APPEND LINES OF li_position_quantity TO i_position_quantity.
+  ENDIF.
+
+ENDFORM.
+*** End of AC002+ ***

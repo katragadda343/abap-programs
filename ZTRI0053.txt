@@ -1,0 +1,1175 @@
+*&---------------------------------------------------------------------*
+* Program          : ZTRI0053
+* Created by       : Chua Yuan Wei (KSAP064)
+* Date             : 01 Jun 2017
+* Business Analyst : Dondapati, Koteswararao
+* Project	         : Project TH Pension & ILP
+* PIR/PCR          : 9000003082
+* Description      : Trade Orders to CITI
+*&---------------------------------------------------------------------*
+*                         MODIFICATION HISTORY
+*&---------------------------------------------------------------------*
+* Changed by       : Erick Lee (KSAP082)
+* Search on        : EL39101
+* Date             : 16 Aug 2018
+* Business Analyst : Sundarasan Rajappan
+* Project	         : BAU
+* PIR/PCR          : 4000039101
+* Description      : Selection Screen Default Values for filpath&CoCde
+*&---------------------------------------------------------------------*
+* Changed by       : Farzilah Zakaria (E103793)
+* Search on        : FZ001
+* Date             : 1/11/2021
+* Business Analyst : Kenny Ng
+* Project	         : BAU
+* PIR/PCR          : 6000020566
+* Description      : Add new flow type 0312 in calculation filter
+*&---------------------------------------------------------------------*
+* Changed by       :
+* Search on        :
+* Date             :
+* Business Analyst :
+* Project	         :
+* PIR/PCR          :
+* Description      :
+*&---------------------------------------------------------------------*
+REPORT ztri0053.
+
+TYPE-POOLS: soi, sbdst.
+*&---------------------------------------------------------------------*
+*  TYPES                                                               *
+*&---------------------------------------------------------------------*
+TYPES: BEGIN OF t_vtbfha,
+         bukrs   TYPE bukrs,
+         rfha    TYPE tb_rfha,
+         rldepo  TYPE vrldepo,
+         sfhaart TYPE tb_sfhaart,
+         ranl    TYPE vvranlw,
+         zuond   TYPE tb_zuond,
+         kontrh  TYPE tb_kunnr_new,
+       END OF t_vtbfha.
+
+TYPES: BEGIN OF t_twd01,
+         bukrs          TYPE bukrs,
+         rldepo         TYPE rldepo,
+         ext_sec_acc_no TYPE tpm_recon_swift_sec_acc_no,
+       END OF t_twd01.
+
+TYPES: BEGIN OF t_twx2,
+         ranl     TYPE vvranlw,
+         vvranlwx TYPE vvranlwxs,
+       END OF t_twx2.
+
+TYPES: BEGIN OF t_vwpanla,
+         ranl  TYPE vvranlw,
+         xallb TYPE xallb,
+         snoti TYPE snoti,
+       END OF t_vwpanla.
+
+TYPES: BEGIN OF t_vtbfhapo.
+    INCLUDE STRUCTURE vtbfhapo.
+TYPES: END OF t_vtbfhapo.
+
+TYPES: BEGIN OF t_trade,
+         bukrs  TYPE bukrs,
+         rfha   TYPE tb_rfha,
+         dcrdat TYPE tb_dcrdat,
+       END OF t_trade.
+
+TYPES: BEGIN OF t_output,
+         col1   TYPE string, "Safekeeping Account
+         col2   TYPE string, "Customer Reference Number
+         col3   TYPE string, "Instruction Type
+         col4   TYPE string, "Security Id Type
+         col5   TYPE string, "Security Id
+         col6   TYPE string, "Security Description
+         col7   TYPE string, "Trade Date
+         col8   TYPE string, "Settlement Date
+         col9   TYPE string, "Settlement Location
+         col10  TYPE string, "Place of Safekeeping
+         col11  TYPE string, "Settlement Currency
+         col12  TYPE string, "Settlement Quantity
+         col13  TYPE string, "Settlement Amount
+         col14  TYPE string, "Free text
+         col15  TYPE string, "Cash Account Number
+         col16  TYPE string, "Cash Account currency
+         col17  TYPE string, "Short form
+         col18  TYPE string, "Clearing Agent Code Type
+         col19  TYPE string, "Clearing Agent Code
+         col20  TYPE string, "Clearing Agent Name
+         col21  TYPE string, "A/c at depository
+         col22  TYPE string, "Buyer/Seller Code Type
+         col23  TYPE string, "Buyer/Seller Code
+         col24  TYPE string, "Buyer/Seller Name
+         col25  TYPE string, "A/c at custodian/clearing agt
+         col26  TYPE string, "Intermediary Custodian Code Type
+         col27  TYPE string, "Intermediary Custodian Code
+         col28  TYPE string, "Intermediary Custodian Name
+         col29  TYPE string, "A/c at clearing agent
+         col30  TYPE string, "Price currency
+         col31  TYPE string, "Price
+         col32  TYPE string, "Deal amount currency
+         col33  TYPE string, "Deal amount
+         col34  TYPE string, "Broker commission currency
+         col35  TYPE string, "Broker commission
+         col36  TYPE string, "Tax currency
+         col37  TYPE string, "Tax
+         col38  TYPE string, "Stamp duty currency
+         col39  TYPE string, "Stamp duty
+         col40  TYPE string, "Amortised amount
+         col41  TYPE string, "Miscellaneous fees currency
+         col42  TYPE string, "Miscellaneous fees
+         col43  TYPE string, "Payment  Levy tax currency
+         col44  TYPE string, "Payment levy tax
+         col45  TYPE string, "Country tax currency
+         col46  TYPE string, "Country tax
+         col47  TYPE string, "Local tax currency
+         col48  TYPE string, "Local tax
+         col49  TYPE string, "Local broker commission currency
+         col50  TYPE string, "Local broker commission
+         col51  TYPE string, "Postage currency
+         col52  TYPE string, "Postage
+         col53  TYPE string, "Regulatory amount currency
+         col54  TYPE string, "Regulatory amount
+         col55  TYPE string, "Shipping amount currency
+         col56  TYPE string, "Shipping amount
+         col57  TYPE string, "Stock exchange tax currency
+         col58  TYPE string, "Stock exchange tax
+         col59  TYPE string, "Transfer tax currency
+         col60  TYPE string, "Transfer tax
+         col61  TYPE string, "Transaction tax currency
+         col62  TYPE string, "Transaction tax
+         col63  TYPE string, "Withholding Tax currency
+         col64  TYPE string, "Withholding Tax
+         col65  TYPE string, "Consumption Tax currency
+         col66  TYPE string, "Consumption Tax
+         col67  TYPE string, "Accrued interest currency
+         col68  TYPE string, "Accrued interest
+         col69  TYPE string, "Margin amount currency
+         col70  TYPE string, "Margin amount
+         col71  TYPE string, "Net Gain/Loss currency
+         col72  TYPE string, "Net Gain/Loss
+         col73  TYPE string, "Accrued capitalization currency
+         col74  TYPE string, "Accrued capitalization
+         col75  TYPE string, "Transaction Type
+         col76  TYPE string, "Maturity Date
+         col77  TYPE string, "Interest Rate
+         col78  TYPE string, "Issue Date
+         col79  TYPE string, "Expiry Date
+         col80  TYPE string, "Dated Date
+         col81  TYPE string, "Coupon Date
+         col82  TYPE string, "Accrued Int Days
+         col83  TYPE string, "Account With Institution Code Type
+         col84  TYPE string, "Account With Institution Code
+         col85  TYPE string, "Account With Institution Name
+         col86  TYPE string, "ACCW Cash Account
+         col87  TYPE string, "Cash Beneficiary Code Type
+         col88  TYPE string, "Cash Beneficiary Code
+         col89  TYPE string, "Cash Beneficiary Name
+         col90  TYPE string, "BENM Cash Account
+         col91  TYPE string, "Payee Code Type
+         col92  TYPE string, "Payee Code
+         col93  TYPE string, "Payee Name
+         col94  TYPE string, "PAYE Cash Account
+         col95  TYPE string, "Repo Reference
+         col96  TYPE string, "Second Leg Reference
+         col97  TYPE string, "Repo Closing Date
+         col98  TYPE string, "Repo Type Indicator
+         col99  TYPE string, "Repo Amount Currency
+         col100 TYPE string, "Repo Amount
+         col101 TYPE string, "Repo Rate
+         col102 TYPE string, "Repo Rate Type
+         col103 TYPE string, "Repo Rate Spread
+         col104 TYPE string, "Repo Call Delay
+         col105 TYPE string, "Repo Total Collateral
+         col106 TYPE string, "Repo Narrative
+         col107 TYPE string, "Securities Alternate Id
+         col108 TYPE string, "Related Reference
+         col109 TYPE string, "Special Instructions 1
+         col110 TYPE string, "Special Instructions value 1
+         col111 TYPE string, "Special Instructions 2
+         col112 TYPE string, "Special Instructions value 2
+         col113 TYPE string, "Special Instructions 3
+         col114 TYPE string, "Special Instructions value 3
+         col115 TYPE string, "Special Instructions 4
+         col116 TYPE string, "Special Instructions value 4
+         col117 TYPE string, "Special Instructions 5
+         col118 TYPE string, "Special Instructions value 5
+       END OF t_output.
+
+TYPES: BEGIN OF t_bp2set,
+         partner  TYPE bu_partner,
+         setvalue TYPE zzsetvalue,
+       END OF t_bp2set.
+
+*&---------------------------------------------------------------------*
+*  VARIABLES                                                           *
+*&---------------------------------------------------------------------*
+DATA: i_vtbfha     TYPE STANDARD TABLE OF t_vtbfha,
+      w_vtbfha     TYPE t_vtbfha,
+      i_twd01      TYPE STANDARD TABLE OF t_twd01,
+      w_twd01      TYPE t_twd01,
+      i_vtbfhapo   TYPE STANDARD TABLE OF t_vtbfhapo,
+      w_vtbfhapo   TYPE t_vtbfhapo,
+      w_vtbfhapo2  TYPE t_vtbfhapo,
+      i_output     TYPE STANDARD TABLE OF t_output,
+      w_output     TYPE t_output,
+      i_twx2       TYPE STANDARD TABLE OF t_twx2,
+      w_twx2       TYPE t_twx2,
+      i_vwpanla    TYPE STANDARD TABLE OF t_vwpanla,
+      w_vwpanla    TYPE t_vwpanla,
+      i_trade      TYPE STANDARD TABLE OF ztr_ilp_trade,
+      w_trade      TYPE ztr_ilp_trade,
+      i_trade_hist TYPE STANDARD TABLE OF t_trade,
+      w_trade_hist TYPE t_trade,
+      i_bp2set     TYPE STANDARD TABLE OF t_bp2set,
+      w_bp2set     TYPE t_bp2set.
+
+DATA: gv_file TYPE localfile.
+
+*&---------------------------------------------------------------------*
+*  ALV                                                                 *
+*&---------------------------------------------------------------------*
+DATA: o_table       TYPE REF TO cl_salv_table,
+      o_column      TYPE REF TO cl_salv_column_table,
+      o_columns_tab TYPE REF TO cl_salv_columns_table,
+      o_display     TYPE REF TO cl_salv_display_settings.
+
+*&---------------------------------------------------------------------*
+*  CONSTANTS                                                           *
+*&---------------------------------------------------------------------*
+CONSTANTS: c_title TYPE lvc_title VALUE 'Trade Orders to CITI'.
+CONSTANTS: c_title_test TYPE lvc_title VALUE 'Trade Orders to CITI - Test Run'.
+
+*&---------------------------------------------------------------------*
+*  SELECTION-SCREEN                                                    *
+*&---------------------------------------------------------------------*
+SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE TEXT-s01.
+******* Begin of EL39101 *******
+*PARAMETERS: p_buk  LIKE t001-bukrs OBLIGATORY.
+PARAMETERS: p_buk  LIKE t001-bukrs OBLIGATORY DEFAULT 'YTH1'.
+******* End   of EL39101 *******
+PARAMETERS: p_tdate TYPE sy-datum OBLIGATORY DEFAULT sy-datum.
+SELECTION-SCREEN END   OF BLOCK b1.
+
+SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME TITLE TEXT-s02.
+******* Begin of EL39101 *******
+*PARAMETERS: p_fpc  LIKE rlgrap-filename OBLIGATORY DEFAULT 'C:\'.
+PARAMETERS: p_fpc  LIKE rlgrap-filename OBLIGATORY DEFAULT 'D:\'.
+******* End   of EL39101 *******
+PARAMETERS: p_test AS CHECKBOX DEFAULT 'X'.
+SELECTION-SCREEN END   OF BLOCK b2.
+
+*&---------------------------------------------------------------------*
+*  AT SELECTION-SCREEN ON VALUE REQUEST FOR                            *
+*&---------------------------------------------------------------------*
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_fpc.
+  PERFORM get_local_dir_file USING p_fpc.
+
+*&---------------------------------------------------------------------*
+*  START-OF-SELECTION                                                  *
+*&---------------------------------------------------------------------*
+START-OF-SELECTION.
+  PERFORM get_mapping.
+  CHECK i_vtbfha[] IS NOT INITIAL.
+  PERFORM generate_output.
+  IF i_output IS NOT INITIAL.
+    PERFORM download_excel.
+    PERFORM display_alv.
+  ELSE.
+    MESSAGE s024(zaia) WITH 'No New Transaction Found for the Trade Date' DISPLAY LIKE 'E'.
+  ENDIF.
+
+*&---------------------------------------------------------------------*
+*  FORM DOWNLOAD_EXCEL                                                 *
+*&---------------------------------------------------------------------*
+FORM download_excel.
+  DATA: lv_len  TYPE i,
+        lv_file TYPE localfile.
+
+  IF p_test NE 'X'.
+    IF i_output IS NOT INITIAL.
+      CLEAR: lv_len, lv_file, gv_file.
+
+      lv_len = strlen( p_fpc ) - 1.
+      IF p_fpc+lv_len(1) <> '\'.
+        CONCATENATE p_fpc '\' INTO p_fpc.
+      ENDIF.
+
+      CONCATENATE p_fpc 'TradeOrdertoCITI' INTO lv_file.
+      CONCATENATE lv_file p_tdate sy-uzeit INTO lv_file SEPARATED BY '_'.
+      CONCATENATE lv_file '.xlsx' INTO gv_file.
+      PERFORM generate_excel TABLES i_output
+                              USING 'ZTRI0053_TEMPLATE'
+                                    lv_file.
+    ELSE.
+      MESSAGE s024(zaia) WITH 'No New Transaction Found for the Trade Date' DISPLAY LIKE 'E'.
+      EXIT.
+    ENDIF.
+
+    IF i_trade IS NOT INITIAL.
+      TRY.
+          MODIFY ztr_ilp_trade FROM TABLE i_trade.
+          COMMIT WORK AND WAIT.
+        CATCH cx_sy_open_sql_db.
+          MESSAGE e024(zaia) WITH 'Problem update to table ZTR_ILP_TRADE'.
+      ENDTRY.
+    ENDIF.
+  ENDIF.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*  FORM GET_MAPPING                                                    *
+*&---------------------------------------------------------------------*
+FORM get_mapping.
+  PERFORM get_bp2set.
+  PERFORM get_vtbfha.
+  PERFORM get_vwpanla.
+  PERFORM get_twd01.
+  PERFORM get_deal.
+  PERFORM get_trade_hist.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*  FORM GET_TRADE_HIST                                                 *
+*&---------------------------------------------------------------------*
+FORM get_trade_hist.
+  REFRESH i_trade_hist.
+  SELECT bukrs rfha dcrdat FROM ztr_ilp_trade INTO TABLE i_trade_hist
+    WHERE bukrs EQ p_buk
+      AND dcrdat EQ p_tdate.
+  IF sy-subrc EQ 0.
+    SORT i_trade_hist.
+  ENDIF.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*  FORM GET_VWPANLA                                                    *
+*&---------------------------------------------------------------------*
+FORM get_vwpanla.
+  DATA: li_vtbfha TYPE STANDARD TABLE OF t_vtbfha.
+
+  REFRESH: i_vwpanla, li_vtbfha.
+  IF i_vtbfha IS NOT INITIAL.
+    li_vtbfha[] = i_vtbfha[].
+    SORT li_vtbfha BY ranl.
+    DELETE ADJACENT DUPLICATES FROM li_vtbfha COMPARING ranl.
+    IF li_vtbfha IS NOT INITIAL.
+      SELECT ranl xallb snoti FROM vwpanla INTO TABLE i_vwpanla
+        FOR ALL ENTRIES IN li_vtbfha
+        WHERE ranl = li_vtbfha-ranl.
+      IF sy-subrc EQ 0.
+        SORT i_vwpanla.
+      ENDIF.
+    ENDIF.
+  ENDIF.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*  FORM GET_BP2SET                                                     *
+*&---------------------------------------------------------------------*
+FORM get_bp2set.
+  REFRESH i_bp2set.
+  SELECT partner setvalue
+    FROM ztr_ilp_bp2set INTO TABLE i_bp2set.
+  IF sy-subrc EQ 0.
+    SORT i_bp2set.
+  ENDIF.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*  FORM GET_VTBFHA                                                     *
+*&---------------------------------------------------------------------*
+FORM get_vtbfha.
+  REFRESH i_vtbfha.
+  SELECT bukrs rfha rldepo sfhaart ranl zuond kontrh
+    FROM vtbfha INTO TABLE i_vtbfha
+    WHERE bukrs EQ p_buk
+      AND dcrdat EQ p_tdate
+      AND rfhazunr = '2'.
+
+  IF sy-subrc EQ 0.
+    SORT i_vtbfha.
+  ELSE.
+    MESSAGE s024(zaia) WITH 'No Transaction Found for the Trade Date' DISPLAY LIKE 'E'.
+    EXIT.
+  ENDIF.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*  FORM GET_TWD01                                                      *
+*&---------------------------------------------------------------------*
+FORM get_twd01.
+  DATA: li_vtbfha TYPE STANDARD TABLE OF t_vtbfha.
+
+  REFRESH: i_twd01, li_vtbfha.
+  IF i_vtbfha IS NOT INITIAL.
+    li_vtbfha[] = i_vtbfha[].
+    SORT li_vtbfha BY rldepo.
+    DELETE ADJACENT DUPLICATES FROM li_vtbfha COMPARING rldepo.
+    IF li_vtbfha IS NOT INITIAL.
+      SELECT bukrs rldepo ext_sec_acc_no FROM twd01 INTO TABLE i_twd01
+        FOR ALL ENTRIES IN li_vtbfha
+        WHERE bukrs EQ li_vtbfha-bukrs
+          AND rldepo = li_vtbfha-rldepo.
+      IF sy-subrc EQ 0.
+        SORT i_twd01.
+      ENDIF.
+    ENDIF.
+  ENDIF.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*  FORM GET_DEAL                                                       *
+*&---------------------------------------------------------------------*
+FORM get_deal.
+  DATA: lt_vtbfhapo TYPE STANDARD TABLE OF t_vtbfhapo,
+        lw_vtbfhapo TYPE t_vtbfhapo.
+
+
+  REFRESH i_vtbfhapo.
+  LOOP AT i_vtbfha INTO w_vtbfha.
+    REFRESH lt_vtbfhapo.
+    CALL FUNCTION 'DEALDATA_READ'
+      EXPORTING
+        all_conditions_and_positions = 'X'
+        companycode                  = w_vtbfha-bukrs
+        currently_active_status      = 'X'
+        dealno                       = w_vtbfha-rfha
+        statusno                     = '0002'
+        via_statuspointer            = 'X'
+      TABLES
+        positions                    = lt_vtbfhapo
+      EXCEPTIONS
+        OTHERS                       = 1.
+    IF sy-subrc EQ 0.
+      IF lt_vtbfhapo IS NOT INITIAL.
+        APPEND LINES OF lt_vtbfhapo TO i_vtbfhapo.
+      ENDIF.
+    ENDIF.
+  ENDLOOP.
+
+  SORT i_vtbfhapo BY rfha ASCENDING
+                     sfhazba ASCENDING.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*  FORM GENERATE_OUTPUT                                                *
+*&---------------------------------------------------------------------*
+FORM generate_output.
+
+  DATA: lv_tdate(10) TYPE c,
+        lv_sdate(10) TYPE c,
+        lv_vvranlwx  TYPE vvranlwxs,
+        lv_freetext  TYPE string,
+        lv_bbbetr    TYPE string,
+        lv_bzbetr    TYPE string,
+        lv_cost      TYPE string,
+        lv_comm      TYPE tb_bzbetr,
+        lv_settle    TYPE tb_bzbetr,
+        lv_settle2   TYPE tb_bzbetr,
+        lv_accint    TYPE tb_bzbetr,
+        lv_ssign     TYPE tb_ssign.
+
+  REFRESH: i_output, i_trade.
+
+  LOOP AT i_vtbfha INTO w_vtbfha.
+    CLEAR: w_output, lv_tdate, lv_sdate, w_trade.
+
+    READ TABLE i_trade_hist INTO w_trade_hist WITH KEY bukrs = p_buk
+                                                       rfha  = w_vtbfha-rfha
+                                                       dcrdat = p_tdate.
+    IF sy-subrc EQ 0.
+      CONTINUE.
+    ENDIF.
+    "Safekeeping Account
+    READ TABLE i_twd01 INTO w_twd01 WITH KEY bukrs = w_vtbfha-bukrs
+                                             rldepo = w_vtbfha-rldepo.
+    IF sy-subrc EQ 0.
+      w_output-col1 = w_twd01-ext_sec_acc_no.
+    ENDIF.
+
+    "Customer Reference Number
+    w_output-col2 = w_vtbfha-rfha.
+
+    "Instruction Type
+    IF w_vtbfha-sfhaart EQ '100'.
+      w_output-col3 = 'RVP'.
+    ELSEIF w_vtbfha-sfhaart EQ '200'.
+      w_output-col3 = 'DVP'.
+    ENDIF.
+
+    "Security Id Type
+    w_output-col4 = 'ISIN'.
+
+    "Security Id
+    SELECT SINGLE vvranlwx INTO lv_vvranlwx FROM twx2
+                WHERE ranl = w_vtbfha-ranl
+                  AND vvranlwi = '3'.
+    IF sy-subrc EQ 0.
+      w_output-col5 = lv_vvranlwx.
+    ENDIF.
+    "Security Id Description
+    READ TABLE i_vwpanla INTO w_vwpanla WITH KEY ranl = w_vtbfha-ranl.
+    IF sy-subrc EQ 0.
+      w_output-col6 = w_vwpanla-xallb.
+    ENDIF.
+
+*    "Trade Date
+*    WRITE p_tdate TO lv_tdate MM/DD/YYYY.
+*    w_output-col7 = lv_tdate.
+
+    LOOP AT i_vtbfhapo INTO w_vtbfhapo WHERE bukrs = w_vtbfha-bukrs
+                                         AND rfha  = w_vtbfha-rfha.
+
+      IF w_vtbfhapo-sfhazba = '0100' OR w_vtbfhapo-sfhazba = '0200'. "Buy/Sell
+        "Trade Date
+        WRITE w_vtbfhapo-dbestand TO lv_tdate MM/DD/YYYY.
+        w_output-col7 = lv_tdate.
+
+        "Settlement Date
+        WRITE w_vtbfhapo-dzterm TO lv_sdate MM/DD/YYYY.
+        w_output-col8 = lv_sdate.
+
+        "Settlement Curreny
+        w_output-col11 = w_vtbfhapo-wzbetr.
+
+        "Settlment Quantity
+        IF w_vwpanla-snoti EQ '1'.
+          w_output-col12 = w_vtbfhapo-bnwhr.
+        ELSEIF w_vwpanla-snoti EQ '2'.
+          w_output-col12 = w_vtbfhapo-astueck.
+        ENDIF.
+*        "Settlement Amount
+*        w_output-col13 = w_vtbfhapo-bzbetr.
+        IF w_vtbfhapo-bzbetr IS NOT INITIAL.
+*          CLEAR: lv_cost, lv_settle.   "del by FZ001
+
+          "add by FZ001
+          CLEAR: lv_cost,
+                 lv_settle,
+                 lv_comm,
+                 lv_bzbetr,
+                 lv_bzbetr,
+                 lv_accint,
+                 lv_ssign,
+                 lv_settle2.
+          " end add by FZ001
+
+          lv_cost = w_vtbfhapo-bzbetr.
+          lv_settle = w_vtbfhapo-bzbetr.
+        ELSE.
+          CLEAR lv_cost.
+        ENDIF.
+        "Price Currency
+        w_output-col30 = w_vtbfhapo-wsbetr.
+
+        "Price
+        IF w_vwpanla-snoti EQ '1'.
+          w_output-col31 = w_vtbfhapo-bpprc.
+        ELSEIF w_vwpanla-snoti EQ '2'.
+          w_output-col31 = w_vtbfhapo-buprc.
+        ENDIF.
+
+        "Deal Amount Currency
+        w_output-col32 = w_vtbfhapo-wbbetr.
+
+        "Deal Amount
+        w_output-col33 = w_vtbfhapo-bbbetr.
+
+*      ELSEIF w_vtbfhapo-sfhazba = '0302' OR w_vtbfhapo-sfhazba = 'ZS04'. "CommissIon  "Del by FZ001
+      ELSEIF w_vtbfhapo-sfhazba = '0302' OR w_vtbfhapo-sfhazba = 'ZS04' OR w_vtbfhapo-sfhazba = '0312'. "Commission  "Add by FZ001
+
+        "Broker Commission Currency
+        w_output-col34 = w_vtbfhapo-wzbetr.
+
+        "Broker Commission
+        CLEAR lv_comm.
+        w_output-col35 = w_vtbfhapo-bzbetr.
+        lv_comm = w_vtbfhapo-bzbetr.
+      ELSEIF w_vtbfhapo-sfhazba = 'ZS24' OR w_vtbfhapo-sfhazba = 'ZS25'. "WHT
+        "Free Text
+        CLEAR: lv_bbbetr, lv_bzbetr.
+        lv_bbbetr = w_vtbfhapo-bbbetr.
+        lv_bzbetr = w_vtbfhapo-bzbetr.
+      ELSEIF w_vtbfhapo-sfhazba = '0870'.
+        "Accrued Interest Currency
+        w_output-col67 = w_vtbfhapo-wzbetr.
+
+        "Accrued Interest
+
+        w_output-col68 = w_vtbfhapo-bzbetr.
+        lv_accint = w_vtbfhapo-bzbetr.
+        lv_ssign = w_vtbfhapo-ssign.
+      ENDIF.
+
+
+
+    ENDLOOP.
+
+    IF w_vwpanla-snoti EQ '1'.
+      READ TABLE i_vtbfhapo INTO w_vtbfhapo2 WITH KEY bukrs = w_vtbfha-bukrs
+                                                      rfha  = w_vtbfha-rfha
+                                                      sfhazba = '0100'.
+      IF sy-subrc EQ 0.
+        IF lv_ssign = '+'.
+          lv_cost = lv_settle - lv_accint.
+        ELSE.
+          lv_cost = lv_settle + lv_accint.
+        ENDIF.
+      ELSE.
+        lv_cost = lv_settle + lv_accint.
+      ENDIF.
+
+      CONDENSE lv_cost NO-GAPS.
+      "Settlement Amount
+      w_output-col13 = lv_cost.
+      CONCATENATE '/COST/' lv_cost '/WHT/' space '/Y0.000000' INTO lv_freetext.
+    ELSEIF w_vwpanla-snoti EQ '2'. "Share
+      IF w_output-col3 EQ 'DVP'.
+        lv_settle2 = lv_settle - lv_comm + lv_bzbetr.
+        lv_cost = lv_settle - lv_comm.
+      ELSE.
+        lv_settle2 = lv_settle + lv_comm - lv_bzbetr.
+        lv_cost = lv_settle + lv_comm.
+      ENDIF.
+
+      CONDENSE lv_cost NO-GAPS.
+      "Settlement Amount
+      w_output-col13 = lv_settle2.
+      CONCATENATE '/COST/' lv_cost '/WHT/' lv_bzbetr '/Y0.000000' INTO lv_freetext.
+    ENDIF.
+
+    CONDENSE lv_freetext NO-GAPS.
+    w_output-col14 = lv_freetext.
+    "Settlement Location
+    w_output-col9 = 'THAILAND'.
+
+    "Place of Safekeeping
+    w_output-col10 = space.
+
+    "Cash Account Number
+    w_output-col15 = space.
+
+    "Cash Account currency
+    w_output-col16 = space.
+
+    "Short Form
+    READ TABLE i_bp2set INTO w_bp2set WITH KEY partner = w_vtbfha-kontrh.
+    IF sy-subrc EQ 0.
+      CONCATENATE 'THTH' w_bp2set-setvalue INTO w_output-col17.
+      CONDENSE w_output-col17 NO-GAPS.
+    ENDIF.
+    "Clearing Agent Code Type
+    w_output-col18 = space.
+
+    "Clearing Agent Code
+    w_output-col19 = space.
+
+    "Clearing Agent Name
+    w_output-col20 = space.
+
+    "A/c at depository
+    w_output-col21 = space.
+
+    "Buyer/Seller Code Type
+    w_output-col22 = space.
+
+    "Buyer/Seller Code
+    w_output-col23 = space.
+
+    "Buyer/Seller Name
+    w_output-col24 = space.
+
+    "A/c at custodian/clearing agt
+    w_output-col25 = space.
+
+    "Intermediary Custodian Code Type
+    w_output-col26 = space.
+
+    "Intermediary Custodian Code
+    w_output-col27 = space.
+
+    "Intermediary Custodian Name
+    w_output-col28 = space.
+
+    "A/c at clearing agent
+    w_output-col29 = space.
+
+    "Col36 to Col 188 not in used.
+
+    APPEND w_output TO i_output.
+    CLEAR lv_accint.
+    w_trade-mandt = sy-mandt.
+    w_trade-bukrs = p_buk.
+    w_trade-rfha =  w_vtbfha-rfha.
+    w_trade-dcrdat = p_tdate.
+    APPEND w_trade TO i_trade.
+  ENDLOOP.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*  FORM GET_LOCAL_DIR_FILE                                             *
+*&---------------------------------------------------------------------*
+FORM get_local_dir_file USING p_localfilename.
+  DATA : lv_title  TYPE string,
+         lv_string TYPE string.
+
+  lv_title = TEXT-t01.
+
+  CALL METHOD cl_gui_frontend_services=>directory_browse
+    EXPORTING
+      window_title    = lv_title
+      initial_folder  = 'C:\'
+    CHANGING
+      selected_folder = lv_string
+    EXCEPTIONS
+      cntl_error      = 1
+      error_no_gui    = 2
+      OTHERS          = 3.
+  IF sy-subrc <> 0.
+    MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+               WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+  ENDIF.
+
+  p_localfilename = lv_string.
+  CALL METHOD cl_gui_cfw=>flush.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*  FORM DISPLAY_ALV                                                    *
+*&---------------------------------------------------------------------*
+FORM display_alv.
+  CHECK i_output IS NOT INITIAL.
+  TRY.
+      cl_salv_table=>factory(
+        IMPORTING
+          r_salv_table = o_table
+        CHANGING
+          t_table      = i_output ).
+    CATCH cx_salv_msg.                                  "#EC NO_HANDLER
+  ENDTRY.
+
+  o_columns_tab = o_table->get_columns( ).
+  o_columns_tab->set_optimize( abap_true ).
+  o_display = o_table->get_display_settings( ).
+  IF p_test EQ 'X'.
+    o_display->set_list_header( c_title_test ).
+  ELSE.
+    o_display->set_list_header( c_title ).
+  ENDIF.
+
+  PERFORM build_fieldcatalog.
+  TRY.
+      o_table->display( ).
+    CATCH cx_salv_msg.                                  "#EC NO_HANDLER
+  ENDTRY.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*  FORM BUILD_FIELDCATALOG                                             *
+*&---------------------------------------------------------------------*
+FORM build_fieldcatalog.
+  PERFORM set_column_text USING:
+     'COL1'      0     'SafeKpAcct'   ' '      ' '       60     space,
+     'COL2'      0     'CustRefNo'    ' '      ' '       60     space,
+     'COL3'      0     'InstType'     ' '      ' '       60     space,
+     'COL4'      0     'SecIDType'    ' '      ' '       60     space,
+     'COL5'      0     'SecID'        ' '      ' '       60     space,
+     'COL6'      0     'SecDesc'      ' '      ' '       60     space,
+     'COL7'      0     'TradeDate'    ' '      ' '       60     space,
+     'COL8'      0     'SettlDate'    ' '      ' '       60     space,
+     'COL9'      0     'SettlLoc'     ' '      ' '       60     space,
+     'COL10'     0     'PlcSafeKp'    ' '      ' '       60     space,
+     'COL11'     0     'SettlCurr'    ' '      ' '       60     space,
+     'COL12'     0     'SettlQuan'    ' '      ' '       60     space,
+     'COL13'     0     'SettlAmt'     ' '      ' '       60     space,
+     'COL14'     0     'FreeText'     ' '      ' '       60     space,
+     'COL15'     0     'CashAcctNo'   ' '      ' '       60     space,
+     'COL16'     0     'CashAccCur'   ' '      ' '       60     space,
+     'COL17'     0     'ShortForm'    ' '      ' '       60     space,
+     'COL18'     0     'ClearType'    ' '      ' '       60     space,
+     'COL19'     0     'ClearCode'    ' '      ' '       60     space,
+     'COL20'     0     'ClearName'    ' '      ' '       60     space,
+     'COL21'     0     'AcctAtDepo'   ' '      ' '       60     space,
+     'COL22'     0     'BuySelType'   ' '      ' '       60     space,
+     'COL23'     0     'BuySelCode'   ' '      ' '       60     space,
+     'COL24'     0     'BuySelName'   ' '      ' '       60     space,
+     'COL25'     0     'CustodAcct'   ' '      ' '       60     space,
+     'COL26'     0     'CustodType'   ' '      ' '       60     space,
+     'COL27'     0     'CustodCode'   ' '      ' '       60     space,
+     'COL28'     0     'CustodName'   ' '      ' '       60     space,
+     'COL29'     0     'ClearAcct'    ' '      ' '       60     space,
+     'COL30'     0     'PriceCurr'    ' '      ' '       60     space,
+     'COL31'     0     'Price'        ' '      ' '       60     space,
+     'COL32'     0     'DealCurr'     ' '      ' '       60     space,
+     'COL33'     0     'DealAmt'      ' '      ' '       60     space,
+     'COL34'     0     'BrokerCurr'   ' '      ' '       60     space,
+     'COL35'     0     'BrokerComm'   ' '      ' '       60     space,
+     'COL36'     0     'TaxCurr'      ' '      ' '       60     space,
+     'COL37'     0     'Tax'          ' '      ' '       60     space,
+     'COL38'     0     'StampCurr'    ' '      ' '       60     space,
+     'COL39'     0     'StampDuty'    ' '      ' '       60     space,
+     'COL40'     0     'AmortAmt'     ' '      ' '       60     space,
+     'COL41'     0     'MiscCurr'     ' '      ' '       60     space,
+     'COL42'     0     'MiscFee'      ' '      ' '       60     space,
+     'COL43'     0     'LevyCurr'     ' '      ' '       60     space,
+     'COL44'     0     'LevyTax'      ' '      ' '       60     space,
+     'COL45'     0     'CtyTxCurr'    ' '      ' '       60     space,
+     'COL46'     0     'CtryTax'      ' '      ' '       60     space,
+     'COL47'     0     'LclTxCurr'    ' '      ' '       60     space,
+     'COL48'     0     'LocalTax'     ' '      ' '       60     space,
+     'COL49'     0     'LclBkCurr'    ' '      ' '       60     space,
+     'COL50'     0     'LclBkComm'    ' '      ' '       60     space,
+     'COL51'     0     'PostCurr'     ' '      ' '       60     space,
+     'COL52'     0     'Postage'      ' '      ' '       60     space,
+     'COL53'     0     'ReguCurr'     ' '      ' '       60     space,
+     'COL54'     0     'ReguAmt'      ' '      ' '       60     space,
+     'COL55'     0     'ShipCurr'     ' '      ' '       60     space,
+     'COL56'     0     'ShipAmt'      ' '      ' '       60     space,
+     'COL57'     0     'StockCurr'    ' '      ' '       60     space,
+     'COL58'     0     'StockTax'     ' '      ' '       60     space,
+     'COL59'     0     'TrsfCurr'     ' '      ' '       60     space,
+     'COL60'     0     'TrsfTax'      ' '      ' '       60     space,
+     'COL61'     0     'TrsfCurr'     ' '      ' '       60     space,
+     'COL62'     0     'TrsfTax'      ' '      ' '       60     space,
+     'COL63'     0     'WHTCurr'      ' '      ' '       60     space,
+     'COL64'     0     'WHTTax'       ' '      ' '       60     space,
+     'COL65'     0     'ConsmpCurr'   ' '      ' '       60     space,
+     'COL66'     0     'ConsmpTax'    ' '      ' '       60     space,
+     'COL67'     0     'AccrCurr'     ' '      ' '       60     space,
+     'COL68'     0     'AccrInt'      ' '      ' '       60     space,
+     'COL69'     0     'MarginCurr'   ' '      ' '       60     space,
+     'COL70'     0     'MarginAmt'    ' '      ' '       60     space,
+     'COL71'     0     'GainLssCur'   ' '      ' '       60     space,
+     'COL72'     0     'GainLoss'     ' '      ' '       60     space,
+     'COL73'     0     'AccCapCurr'   ' '      ' '       60     space,
+     'COL74'     0     'AccCapital'   ' '      ' '       60     space,
+     'COL75'     0     'TranType'     ' '      ' '       60     space,
+     'COL76'     0     'MaturityDt'   ' '      ' '       60     space,
+     'COL77'     0     'IntRate'      ' '      ' '       60     space,
+     'COL78'     0     'IssueDate'    ' '      ' '       60     space,
+     'COL79'     0     'ExpiryDate'   ' '      ' '       60     space,
+     'COL80'     0     'DatedDate'    ' '      ' '       60     space,
+     'COL81'     0     'CouponDate'   ' '      ' '       60     space,
+     'COL82'     0     'AccrIntDay'   ' '      ' '       60     space,
+     'COL83'     0     'InstType'     ' '      ' '       60     space,
+     'COL84'     0     'InstCode'     ' '      ' '       60     space,
+     'COL85'     0     'InstName'     ' '      ' '       60     space,
+     'COL86'     0     'ACCWAcct'     ' '      ' '       60     space,
+     'COL87'     0     'CashType'     ' '      ' '       60     space,
+     'COL88'     0     'CashCode'     ' '      ' '       60     space,
+     'COL89'     0     'CashName'     ' '      ' '       60     space,
+     'COL90'     0     'BENMAcct'     ' '      ' '       60     space,
+     'COL91'     0     'PayeeType'    ' '      ' '       60     space,
+     'COL92'     0     'PayeeCode'    ' '      ' '       60     space,
+     'COL93'     0     'PayeeName'    ' '      ' '       60     space,
+     'COL94'     0     'PAYEAcct'     ' '      ' '       60     space,
+     'COL95'     0     'RepoRef'      ' '      ' '       60     space,
+     'COL96'     0     '2ndLegRef'    ' '      ' '       60     space,
+     'COL97'     0     'RepoClosDt'   ' '      ' '       60     space,
+     'COL98'     0     'RepoTypInd'   ' '      ' '       60     space,
+     'COL99'     0     'RepoAmtCur'   ' '      ' '       60     space,
+     'COL100'    0     'RepoAmt'      ' '      ' '       60     space,
+     'COL101'    0     'RepoRate'     ' '      ' '       60     space,
+     'COL102'    0     'RepoRateTy'   ' '      ' '       60     space,
+     'COL103'    0     'RepoSpread'   ' '      ' '       60     space,
+     'COL104'    0     'RepoDelay'    ' '      ' '       60     space,
+     'COL105'    0     'RepoTtlCol'   ' '      ' '       60     space,
+     'COL106'    0     'RepoNarr'     ' '      ' '       60     space,
+     'COL107'    0     'SecAltID'     ' '      ' '       60     space,
+     'COL108'    0     'RelatedRef'   ' '      ' '       60     space,
+     'COL109'    0     'SplInst1'     ' '      ' '       60     space,
+     'COL110'    0     'SplInstV1'    ' '      ' '       60     space,
+     'COL111'    0     'SplInst2'     ' '      ' '       60     space,
+     'COL112'    0     'SplInstV2'    ' '      ' '       60     space,
+     'COL113'    0     'SplInst3'     ' '      ' '       60     space,
+     'COL114'    0     'SplInstV3'    ' '      ' '       60     space,
+     'COL115'    0     'SplInst4'     ' '      ' '       60     space,
+     'COL116'    0     'SplInstV4'    ' '      ' '       60     space,
+     'COL117'    0     'SplInst5'     ' '      ' '       60     space,
+     'COL118'    0     'SplInstV5'    ' '      ' '       60     space.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*  FORM SET_TECHNICAL                                                  *
+*&---------------------------------------------------------------------*
+FORM set_technical USING pi_fieldname TYPE lvc_fname.
+  TRY.
+      o_column ?= o_columns_tab->get_column( pi_fieldname ).
+      o_column->set_technical( abap_true ).
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+  ENDTRY.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*  FORM SET_COLUMN_TEXT                                                *
+*&---------------------------------------------------------------------*
+FORM set_column_text USING pi_fieldname TYPE lvc_fname
+                           pi_color TYPE lvc_col
+                           pi_short TYPE scrtext_s
+                           pi_medium TYPE scrtext_m
+                           pi_long TYPE scrtext_l
+                           pi_outlen TYPE lvc_outlen
+                           pi_noout TYPE c.
+
+  DATA: ls_color TYPE lvc_s_colo.
+
+  TRY.
+      o_column ?= o_columns_tab->get_column( pi_fieldname ).
+      ls_color-col = pi_color.
+      o_column->set_color( ls_color ).
+      o_column->set_short_text( pi_short ).
+      o_column->set_medium_text( pi_medium ).
+      o_column->set_long_text( pi_long ).
+      o_column->set_output_length( pi_outlen ).
+      IF pi_noout EQ 'X'.
+        o_column->set_visible( abap_false ).
+      ENDIF.
+    CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+  ENDTRY.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*  FORM GENERATE_EXCEL                                                 *
+*&---------------------------------------------------------------------*
+FORM generate_excel TABLES pt_output TYPE STANDARD TABLE
+                     USING pi_template TYPE bds_propva
+                           pi_file     TYPE localfile.
+
+  DATA: container       TYPE REF TO cl_gui_custom_container,
+        control         TYPE REF TO i_oi_container_control,
+        document        TYPE REF TO i_oi_document_proxy,
+        spreadsheet     TYPE REF TO i_oi_spreadsheet,
+        error           TYPE REF TO i_oi_error,
+*      errors          TYPE REF TO i_oi_error OCCURS 0 WITH HEADER LINE,
+        bds_document    TYPE REF TO cl_bds_document_set,
+        lv_retcode      TYPE soi_ret_string,
+        lv_is_available TYPE i,
+        lv_is_closed    TYPE i,
+        lv_has_activex,
+        lv_last_row     TYPE i,
+        lv_last_col     TYPE i.
+
+
+  DATA: li_signature  TYPE sbdst_signature,
+        lw_signature  LIKE LINE OF li_signature,
+        li_uri        TYPE sbdst_uri,
+        lw_uri        LIKE LINE OF li_uri,
+        li_fields     TYPE STANDARD TABLE OF rfc_fields,
+        lv_object_key TYPE sbdst_object_key.
+
+  DATA: li_output TYPE soi_generic_table,
+        lw_output TYPE soi_generic_item,
+        li_range  TYPE soi_range_list,
+        lw_range  TYPE soi_range_item,
+        lv_col    TYPE i,
+        lv_row    TYPE i.
+  FIELD-SYMBOLS: <wa>  TYPE any,
+                 <col> TYPE any.
+
+  CALL FUNCTION 'GUI_HAS_ACTIVEX'
+    IMPORTING
+      return = lv_has_activex.
+  IF lv_has_activex IS INITIAL.
+    MESSAGE s024(zaia) WITH 'Use a Windows GUI for this program' DISPLAY LIKE 'E'.
+    EXIT.
+  ENDIF.
+
+  IF control IS INITIAL.
+    CALL METHOD c_oi_container_control_creator=>get_container_control
+      IMPORTING
+        control = control
+        retcode = lv_retcode
+        error   = error.
+    CALL METHOD error->raise_message EXPORTING type = 'E'.
+  ENDIF.
+
+  IF container IS INITIAL.
+    CREATE OBJECT container
+      EXPORTING
+        container_name = 'CONTAINER'.
+  ENDIF.
+
+  CALL METHOD control->init_control
+    EXPORTING
+      r3_application_name      = pi_template
+      inplace_enabled          = 'X'
+      inplace_scroll_documents = 'X'
+      parent                   = container
+    IMPORTING
+      retcode                  = lv_retcode
+      error                    = error.
+  CALL METHOD error->raise_message EXPORTING type = 'E'.
+
+  IF document IS INITIAL.
+    CALL METHOD control->get_document_proxy
+      EXPORTING
+        document_type  = 'Excel.Sheet'
+        no_flush       = 'X'
+      IMPORTING
+        document_proxy = document
+        retcode        = lv_retcode
+        error          = error.
+    CALL METHOD error->raise_message EXPORTING type = 'E'.
+  ENDIF.
+
+  CLEAR lw_signature.
+  lw_signature-prop_name = 'DESCRIPTION'.
+  lw_signature-prop_value = pi_template.
+  APPEND lw_signature TO li_signature.
+
+  CLEAR lv_object_key.
+  lv_object_key = pi_template.
+  CREATE OBJECT bds_document.
+  CALL METHOD bds_document->get_with_url
+    EXPORTING
+      classname       = 'SOFFICEINTEGRATION'
+      classtype       = 'OT'
+      object_key      = lv_object_key
+    CHANGING
+      uris            = li_uri
+      signature       = li_signature
+    EXCEPTIONS
+      nothing_found   = 1
+      error_kpro      = 2
+      internal_error  = 3
+      parameter_error = 4
+      not_authorized  = 5
+      not_allowed     = 6.
+  CHECK sy-subrc EQ 0.
+
+  READ TABLE li_uri INTO lw_uri INDEX 1.
+  IF sy-subrc EQ 0.
+    CALL METHOD document->open_document
+      EXPORTING
+        document_url = lw_uri-uri
+        open_inplace = 'X'
+      IMPORTING
+        retcode      = lv_retcode
+        error        = error.
+    CALL METHOD error->raise_message EXPORTING type = 'E'.
+  ENDIF.
+
+  CALL METHOD document->has_spreadsheet_interface
+    IMPORTING
+      is_available = lv_is_available
+      retcode      = lv_retcode
+      error        = error.
+  CALL METHOD error->raise_message EXPORTING type = 'E'.
+
+  CALL METHOD document->get_spreadsheet_interface
+    IMPORTING
+      sheet_interface = spreadsheet
+      retcode         = lv_retcode
+      error           = error.
+  CALL METHOD error->raise_message EXPORTING type = 'E'.
+
+  CALL METHOD spreadsheet->select_sheet
+    EXPORTING
+      name    = 'OUTPUT'
+    IMPORTING
+      retcode = lv_retcode
+      error   = error.
+  CALL METHOD error->raise_message EXPORTING type = 'E'.
+
+  CALL FUNCTION 'DP_GET_FIELDS_FROM_TABLE'
+    TABLES
+      data   = i_output
+      fields = li_fields.
+
+  lv_last_row = lines( i_output ).
+  lv_last_col = lines( li_fields ).
+
+  CALL METHOD spreadsheet->set_selection
+    EXPORTING
+      left    = 1
+      top     = 2
+      rows    = lv_last_row
+      columns = lv_last_col
+    IMPORTING
+      retcode = lv_retcode
+      error   = error.
+  CALL METHOD error->raise_message EXPORTING type = 'E'.
+
+  CALL METHOD spreadsheet->insert_range
+    EXPORTING
+      columns = lv_last_col
+      rows    = lv_last_row
+      name    = pi_template
+    IMPORTING
+      retcode = lv_retcode
+      error   = error.
+  CALL METHOD error->raise_message EXPORTING type = 'E'.
+
+  CLEAR: li_output, li_range, lv_col, lv_row.
+
+  LOOP AT i_output INTO w_output.
+    CLEAR lw_output.
+
+    lw_output-row = sy-tabix.
+
+    ASSIGN w_output TO <wa>.
+    WHILE sy-subrc = 0.
+      ASSIGN COMPONENT sy-index OF STRUCTURE <wa> TO <col>.
+      IF sy-subrc EQ 0.
+        lw_output-column = sy-index.
+        lw_output-value  = <col>.
+        CONDENSE: lw_output-row NO-GAPS,
+                  lw_output-column NO-GAPS,
+                  lw_output-value NO-GAPS.
+        APPEND lw_output TO li_output.
+      ENDIF.
+    ENDWHILE.
+    CLEAR sy-subrc.
+
+  ENDLOOP.
+
+  CLEAR lw_range.
+  lw_range-name = 'ZTRI0053_TEMPLATE'.
+  lw_range-rows = lv_last_row.
+  lw_range-columns = lv_last_col.
+
+  CONDENSE: lw_range-name NO-GAPS,
+            lw_range-rows NO-GAPS,
+            lw_range-columns NO-GAPS.
+
+  APPEND lw_range TO li_range.
+  CALL METHOD spreadsheet->set_ranges_data
+    EXPORTING
+      ranges   = li_range
+      contents = li_output.
+
+  CALL METHOD spreadsheet->set_selection
+    EXPORTING
+      left    = 1
+      top     = 1
+      rows    = 1
+      columns = 1
+    IMPORTING
+      retcode = lv_retcode
+      error   = error.
+  CALL METHOD error->raise_message EXPORTING type = 'E'.
+
+  CALL METHOD document->save_as
+    EXPORTING
+      file_name = pi_file
+    IMPORTING
+      retcode   = lv_retcode
+      error     = error.
+  IF lv_retcode = c_oi_errors=>ret_ok.
+    MESSAGE s108(n2doc_word) WITH gv_file.
+  ENDIF.
+
+  CALL METHOD document->release_document
+    IMPORTING
+      retcode = lv_retcode.
+
+  FREE: spreadsheet, document.
+
+  CALL METHOD control->release_all_documents.
+
+  CALL METHOD control->destroy_control.
+
+ENDFORM.

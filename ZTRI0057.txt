@@ -1,0 +1,1421 @@
+*&---------------------------------------------------------------------*
+* Program          : ZTRI0057
+* Created by       : Chua Yuan Wei (KSAP064)
+* Date             : 01 Jun 2017
+* Business Analyst : Dondapati, Koteswararao
+* Project	         : Project TH Pension & ILP
+* PIR/PCR          : 9000003082
+* Description      : FAM Upload
+*&---------------------------------------------------------------------*
+*                         MODIFICATION HISTORY
+*&---------------------------------------------------------------------*
+* Changed by       : Chua Yuan Wei
+* Search on        : AC001
+* Date             : 28 Mar 2018
+* Business Analyst : Ridzuan
+* Project	         :
+* PIR/PCR          : 6000004552
+* Description      : Local Ticker logic
+*&---------------------------------------------------------------------*
+
+REPORT ZTRI0057.
+
+*----------------------------------------------------------------------*
+* TABLES                                                               *
+*----------------------------------------------------------------------*
+TABLES: sxpgcolist, adr6.
+
+
+TYPES: BEGIN OF t_mktsrc,
+        isin      TYPE string,
+        exchange  TYPE string,
+        date      TYPE string,
+        currency  TYPE string,
+        type      TYPE string,
+        price     TYPE string,
+       END OF t_mktsrc.
+
+TYPES: BEGIN OF t_idxsrc,
+        idx      TYPE string,
+        date     TYPE string,
+        ratio    TYPE string,
+        error    TYPE c,
+        message  TYPE string,
+       END OF t_idxsrc.
+
+TYPES: BEGIN OF t_log,
+        isin TYPE vvranlwxs.
+        INCLUDE TYPE atras.
+        INCLUDE TYPE bapiret1.
+TYPES END OF t_log.
+
+TYPES: BEGIN OF t_isin,
+        isin TYPE vvranlwxs,
+       END OF t_isin.
+
+TYPES: BEGIN OF t_ranl,
+        ranl TYPE vvranlw,
+       END OF t_ranl.
+
+TYPES: BEGIN OF t_twx2,
+        ranl TYPE vvranlw,
+        vvranlwx TYPE vvranlwxs,
+       END OF t_twx2.
+
+TYPES: BEGIN OF t_vwpbono,
+        rantyp TYPE rantyp,
+        ranl TYPE vvranlw,
+        rhandpl TYPE vvrhandpl,
+       END OF t_vwpbono.
+
+TYPES: BEGIN OF t_filepath,
+         filepath     TYPE regut-fsnam,
+         filename     TYPE eps2fili-name,
+         err_flag(1)  TYPE c,
+         message(200) TYPE c,
+         variant      TYPE variant,
+       END OF t_filepath.
+
+DATA: i_mktsrc TYPE STANDARD TABLE OF t_mktsrc,
+      w_mktsrc TYPE t_mktsrc,
+      i_idxsrc TYPE STANDARD TABLE OF t_idxsrc,
+      w_idxsrc TYPE t_idxsrc,
+      i_vwpbono TYPE STANDARD TABLE OF t_vwpbono,
+      w_vwpbono TYPE t_vwpbono,
+      i_log TYPE STANDARD TABLE OF t_log,
+      w_log TYPE t_log,
+      i_isin TYPE STANDARD TABLE OF t_isin,
+      w_isin TYPE t_isin,
+      i_ranl TYPE STANDARD TABLE OF t_ranl,
+      w_ranl TYPE t_ranl,
+      i_twx2 TYPE STANDARD TABLE OF t_twx2,
+      w_twx2 TYPE t_twx2,
+      i_filepath TYPE TABLE OF t_filepath,
+      w_filepath TYPE t_filepath.
+
+DATA: i_atras TYPE SORTED TABLE OF atras
+                  WITH UNIQUE KEY rantyp ranl rhandpl skursart dkurs.
+DATA: i_atras_err TYPE SORTED TABLE OF atras
+                  WITH UNIQUE KEY rantyp ranl rhandpl skursart dkurs.
+DATA: i_atras_exchange_err TYPE SORTED TABLE OF atras
+                  WITH UNIQUE KEY rantyp ranl rhandpl skursart dkurs.
+DATA: i_atras_isin_err TYPE SORTED TABLE OF atras
+                  WITH UNIQUE KEY rantyp ranl rhandpl skursart dkurs.
+DATA: v_startcol TYPE i VALUE '1',
+      v_startrow TYPE i VALUE '1',
+      v_endcol   TYPE i VALUE '256',
+      v_endrow   TYPE i VALUE '65536'.
+
+CONSTANTS: c_msgid TYPE sy-msgid VALUE 'ZTR_MC_E0003',
+           c_title   TYPE lvc_title VALUE 'FAM Upload',
+           c_title_test   TYPE lvc_title VALUE 'TEST RUN: FAM Upload'.
+
+DATA: gv_file   TYPE string,
+      gv_filename TYPE string.
+
+DATA: w_excel       TYPE zbc_excel_data,
+      i_excel       TYPE ztt_excel_data,
+      w_border(4)   TYPE c.
+DATA: w_doc_type(3),
+      w_xml_table  TYPE solix_tab,
+      w_xml_size   TYPE i,
+      w_text       TYPE c LENGTH 60.
+
+  DEFINE insert_cell.
+    CLEAR w_excel.
+    move &1            to w_excel-sheet_nro.
+    move &2            to w_excel-row_nro.
+    move &3            to w_excel-column_nro.
+    move &4            to w_excel-value.
+    move &5            to w_excel-bold.
+    move &6            to w_excel-justify.
+    move &7            to w_excel-numberformat.
+    move &8            to w_border.
+    move w_border+0(1) to w_excel-border_top.
+    move w_border+1(1) to w_excel-border_right.
+    move w_border+2(1) to w_excel-border_bottom.
+    move w_border+3(1) to w_excel-border_left.
+    move &9            to w_excel-back_color.
+    append w_excel to i_excel.
+  END-OF-DEFINITION.
+
+*&---------------------------------------------------------------------*
+*  ALV                                                                 *
+*&---------------------------------------------------------------------*
+DATA: o_table               TYPE REF TO cl_salv_table,
+      o_column              TYPE REF TO cl_salv_column_table,
+      o_columns_tab         TYPE REF TO cl_salv_columns_table,
+      o_functions           TYPE REF TO cl_salv_functions_list,
+      o_display             TYPE REF TO cl_salv_display_settings,
+      o_events              TYPE REF TO cl_salv_events_table.
+
+*&---------------------------------------------------------------------*
+*  CLASS                                                               *
+*&---------------------------------------------------------------------*
+CLASS lcl_handle_events DEFINITION FINAL.
+  PUBLIC SECTION.
+    METHODS:
+      on_single_click FOR EVENT link_click OF cl_salv_events_table
+        IMPORTING row column.
+ENDCLASS. "lcl_handle_events DEFINITION
+
+CLASS lcl_handle_events IMPLEMENTATION.
+  METHOD on_single_click.
+    PERFORM show_long_message USING row column.
+  ENDMETHOD.                    "on_single_click
+ENDCLASS. "lcl_handle_events IMPLEMENTATION
+
+SELECTION-SCREEN BEGIN OF BLOCK b0 WITH FRAME TITLE text-000.
+PARAMETERS: p_mkt  RADIOBUTTON GROUP gr0 DEFAULT 'X' USER-COMMAND ucomm,
+            p_idx   RADIOBUTTON GROUP gr0.
+SELECTION-SCREEN END   OF BLOCK b0.
+
+SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE text-001.
+PARAMETERS: p_app  RADIOBUTTON GROUP gr1 DEFAULT 'X' USER-COMMAND ucomm,
+            p_pc   RADIOBUTTON GROUP gr1,
+            p_fapp TYPE rlgrap-filename MODIF ID FI1.
+PARAMETERS: p_fpc  LIKE rfpdo1-febauszf MODIF ID FI2.
+PARAMETERS: p_back  LIKE rlgrap-filename MODIF ID FI1.
+SELECTION-SCREEN END   OF BLOCK b1.
+
+SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME TITLE text-s02.
+SELECTION-SCREEN BEGIN OF LINE.
+SELECTION-SCREEN COMMENT 1(17) text-t01 FOR FIELD p_esend.
+SELECTION-SCREEN POSITION 25.
+PARAMETERS: p_esend AS CHECKBOX.
+SELECTION-SCREEN END OF LINE.
+SELECT-OPTIONS: s_bname FOR adr6-smtp_addr NO INTERVALS.
+SELECTION-SCREEN END   OF BLOCK b2.
+
+SELECTION-SCREEN BEGIN OF BLOCK b3 WITH FRAME TITLE text-s03.
+PARAMETERS: p_header AS CHECKBOX DEFAULT 'X'.
+PARAMETERS: p_test   AS CHECKBOX.
+SELECTION-SCREEN END   OF BLOCK b3.
+
+AT SELECTION-SCREEN OUTPUT.
+  PERFORM modify_sel_screen.
+
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_fapp.
+  PERFORM get_sap_dir_file USING p_fapp.
+
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_back.
+  PERFORM get_sap_dir_file USING p_back.
+
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_fpc.
+  PERFORM get_local_dir_file USING p_fpc.
+
+*&---------------------------------------------------------------------*
+*  FORM MODIFY_SEL_SCREEN                                              *
+*&---------------------------------------------------------------------*
+FORM modify_sel_screen.
+  LOOP AT SCREEN.
+
+    IF screen-group1 = 'FI1'.
+      IF p_app = 'X'.
+        screen-active = 1.
+      ELSE.
+        screen-active = 0.
+      ENDIF.
+    ENDIF.
+
+    IF screen-group1 = 'FI2'.
+      IF p_pc = 'X'.
+        screen-active = 1.
+      ELSE.
+        screen-active = 0.
+      ENDIF.
+    ENDIF.
+    MODIFY SCREEN.
+  ENDLOOP.
+ENDFORM.
+*---------------------------------------------------------------*
+*  FORM GET_SAP_DIR_FILE                                        *
+*---------------------------------------------------------------*
+FORM get_sap_dir_file USING p_serverfilename.
+
+  CALL FUNCTION '/SAPDMC/LSM_F4_SERVER_FILE'
+    EXPORTING
+      directory        = p_serverfilename
+      filemask         = ' '
+    IMPORTING
+      serverfile       = p_serverfilename
+    EXCEPTIONS
+      canceled_by_user = 1
+      OTHERS           = 2.
+
+  IF sy-subrc <> 0.
+    MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+             WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+  ENDIF.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*  FORM GET_LOCAL_DIR_FILE                                             *
+*&---------------------------------------------------------------------*
+FORM get_local_dir_file USING p_localfilename.
+
+  DATA: l_files TYPE filetable,
+        h_files TYPE file_table,
+        l_rc    LIKE sy-subrc.
+
+  CALL METHOD cl_gui_frontend_services=>file_open_dialog
+    CHANGING
+      file_table              = l_files
+      rc                      = l_rc
+    EXCEPTIONS
+      file_open_dialog_failed = 1
+      cntl_error              = 2
+      error_no_gui            = 3
+      not_supported_by_gui    = 4
+      OTHERS                  = 5.
+  IF sy-subrc <> 0 OR l_rc < 0.
+    MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+               WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+  ELSE.
+    READ TABLE l_files INDEX 1 INTO h_files.
+    p_localfilename = h_files-filename.
+  ENDIF.
+ENDFORM.                    "GET_LOCAL_DIR_FILE
+
+*&---------------------------------------------------------------------*
+*  START-OF-SELECTION                                                  *
+*&---------------------------------------------------------------------*
+START-OF-SELECTION.
+  IF p_mkt EQ 'X'.
+    PERFORM upload.
+    PERFORM mapping.
+    PERFORM update_atras.
+    PERFORM display_alv USING i_log.
+  ELSE.
+    PERFORM upload.
+    PERFORM validate.
+    PERFORM update_db.
+    PERFORM display_alv USING i_idxsrc.
+  ENDIF.
+
+*&---------------------------------------------------------------------*
+*  FORM VALIDATE                                                       *
+*&---------------------------------------------------------------------*
+FORM validate.
+  DATA: lv_index_name TYPE tidx_index_name.
+
+  LOOP AT i_idxsrc INTO w_idxsrc.
+    SELECT SINGLE index_name INTO lv_index_name FROM tidx_price_index
+      WHERE index_name = w_idxsrc-idx.
+    IF sy-subrc NE 0.
+      w_idxsrc-error = 'X'.
+      CONCATENATE 'Invalid Index' w_idxsrc-idx INTO w_idxsrc-message SEPARATED BY SPACE.
+      MODIFY i_idxsrc FROM w_idxsrc.
+      CONTINUE.
+    ENDIF.
+  ENDLOOP.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*  FORM UPDATE_DB                                                      *
+*&---------------------------------------------------------------------*
+FORM update_db.
+  DATA: i_idx TYPE STANDARD TABLE OF tidx_price_value,
+        w_idx TYPE tidx_price_value.
+
+  CHECK p_test IS INITIAL.
+  LOOP AT i_idxsrc INTO w_idxsrc WHERE error = SPACE.
+    w_idx-mandt = sy-mandt.
+    w_idx-index_name = w_idxsrc-idx.
+    w_idx-value_date = w_idxsrc-date.
+    w_idx-index_value = w_idxsrc-ratio.
+    APPEND w_idx TO i_idx.
+  ENDLOOP.
+
+  IF i_idx IS NOT INITIAL.
+    TRY.
+        MODIFY tidx_price_value FROM TABLE i_idx.
+        COMMIT WORK AND WAIT.
+      CATCH cx_sy_open_sql_db.
+        MESSAGE e024(ZAIA) WITH 'Problem update to table TIDX_PRICE_VALUE'.
+    ENDTRY.
+  ENDIF.
+
+  LOOP AT i_idxsrc INTO w_idxsrc.
+    w_idxsrc-message = 'Index Ratio Updated'.
+    MODIFY i_idxsrc FROM w_idxsrc.
+  ENDLOOP.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*  FORM MAPPING                                                        *
+*&---------------------------------------------------------------------*
+FORM mapping.
+DATA: lw_atras TYPE atras.
+
+  REFRESH: i_isin, i_twx2, i_ranl, i_vwpbono.
+  LOOP AT i_mktsrc INTO w_mktsrc.
+    w_isin-isin = w_mktsrc-isin.
+    COLLECT w_isin INTO i_isin.
+  ENDLOOP.
+
+  IF i_isin IS NOT INITIAL.
+*** Start of AC001+ ***
+    LOOP AT i_isin INTO w_isin.
+      SELECT ranl vvranlwx APPENDING TABLE i_twx2 FROM twx2
+         WHERE vvranlwx = w_isin-isin
+           AND vvranlwi = 3.
+      IF sy-subrc <> 0.
+        SELECT ranl vvranlwx APPENDING TABLE i_twx2 FROM twx2
+           WHERE vvranlwx = w_isin-isin
+             AND vvranlwi = 8.
+      ENDIF.
+    ENDLOOP.
+*** End of AC001+ ***
+*** Start of AC001- ***
+*    SELECT ranl vvranlwx INTO TABLE i_twx2 FROM twx2
+*       FOR ALL ENTRIES IN i_isin
+*       WHERE vvranlwx = i_isin-isin
+*         AND vvranlwi = 3.
+*** End of AC001- ***
+  ENDIF.
+
+  LOOP AT i_mktsrc INTO w_mktsrc.
+    LOOP AT i_twx2 INTO w_twx2 WHERE vvranlwx = w_mktsrc-isin.
+      w_ranl-ranl = w_twx2-ranl.
+      COLLECT w_ranl INTO i_ranl.
+    ENDLOOP.
+  ENDLOOP.
+
+  IF i_ranl IS NOT INITIAL.
+   SELECT rantyp ranl rhandpl INTO TABLE i_vwpbono FROM vwpbono
+     FOR ALL ENTRIES IN i_ranl
+     WHERE rantyp = '2'
+       AND ranl = i_ranl-ranl.
+  ENDIF.
+
+  LOOP AT i_mktsrc INTO w_mktsrc.
+    IF w_mktsrc-type NE '01' AND w_mktsrc-type NE '05' AND
+         w_mktsrc-type NE 'NV' AND w_mktsrc-type NE 'TH'.
+     CLEAR lw_atras.
+     lw_atras-mandt = sy-mandt.
+     lw_atras-rantyp = 2.
+     lw_atras-ranl = w_twx2-ranl.
+     lw_atras-rhandpl = w_mktsrc-exchange.
+     lw_atras-skursart = w_mktsrc-type.
+     lw_atras-pktkur   = w_mktsrc-price.
+     lw_atras-dkurs = w_mktsrc-date.
+     lw_atras-waers = w_mktsrc-currency.
+     lw_atras-rbear = sy-uname.
+     lw_atras-dbear = sy-datum.
+     lw_atras-tbear = sy-uzeit.
+     INSERT lw_atras INTO TABLE i_atras_err.
+    ELSE.
+      READ TABLE i_twx2 INTO w_twx2 WITH KEY vvranlwx = w_mktsrc-isin.
+      IF sy-subrc EQ 0.
+        LOOP AT i_twx2 INTO w_twx2 WHERE vvranlwx = w_mktsrc-isin.
+          READ TABLE i_vwpbono INTO w_vwpbono WITH KEY ranl = w_twx2-ranl
+                                                       rhandpl = w_mktsrc-exchange.
+          IF sy-subrc EQ 0.
+            lw_atras-mandt = sy-mandt.
+            lw_atras-rantyp = 2.
+            lw_atras-ranl = w_twx2-ranl.
+            lw_atras-rhandpl = w_mktsrc-exchange.
+            lw_atras-skursart = w_mktsrc-type.
+            lw_atras-pktkur   = w_mktsrc-price.
+            lw_atras-dkurs = w_mktsrc-date.
+            lw_atras-waers = w_mktsrc-currency.
+            lw_atras-rbear = sy-uname.
+            lw_atras-dbear = sy-datum.
+            lw_atras-tbear = sy-uzeit.
+            INSERT lw_atras INTO TABLE i_atras.
+          ELSE.
+            lw_atras-mandt = sy-mandt.
+            lw_atras-rantyp = 2.
+            lw_atras-ranl = w_twx2-ranl.
+            lw_atras-rhandpl = w_mktsrc-exchange.
+            lw_atras-skursart = w_mktsrc-type.
+            lw_atras-pktkur   = w_mktsrc-price.
+            lw_atras-dkurs = w_mktsrc-date.
+            lw_atras-waers = w_mktsrc-currency.
+            lw_atras-rbear = sy-uname.
+            lw_atras-dbear = sy-datum.
+            lw_atras-tbear = sy-uzeit.
+            INSERT lw_atras INTO TABLE i_atras_exchange_err.
+          ENDIF.
+        ENDLOOP.
+      ELSE.
+         CLEAR lw_atras.
+         lw_atras-mandt = sy-mandt.
+         lw_atras-rantyp = 2.
+         lw_atras-ranl = w_mktsrc-isin.
+         lw_atras-rhandpl = w_mktsrc-exchange.
+         lw_atras-skursart = w_mktsrc-type.
+         lw_atras-pktkur   = w_mktsrc-price.
+         lw_atras-dkurs = w_mktsrc-date.
+         lw_atras-waers = w_mktsrc-currency.
+         lw_atras-rbear = sy-uname.
+         lw_atras-dbear = sy-datum.
+         lw_atras-tbear = sy-uzeit.
+         INSERT lw_atras INTO TABLE i_atras_isin_err.
+      ENDIF.
+
+    ENDIF.
+  ENDLOOP.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*  FORM UPDATE_ATRAS                                                   *
+*&---------------------------------------------------------------------*
+FORM update_atras.
+  DATA: li_atras TYPE TABLE OF atras,
+        li_error_atras TYPE TABLE OF atras,
+        lw_atras TYPE atras,
+        lw_atras_err TYPE atras,
+        lv_subrc(2) TYPE c.
+
+    li_atras = i_atras.
+
+    IF p_test EQ 'X'.
+      LOOP AT i_atras INTO lw_atras.
+        PERFORM append_log USING lw_atras 'S' '021'
+                                  c_msgid space space
+                                  space space.
+      ENDLOOP.
+
+      LOOP AT i_atras_err INTO lw_atras_err.
+        PERFORM append_log USING lw_atras_err 'E' '000'
+                                  c_msgid 'Invalid Rate Type' lw_atras_err-skursart
+                                  space space.
+      ENDLOOP.
+
+      LOOP AT i_atras_exchange_err INTO lw_atras_err.
+        PERFORM append_log USING lw_atras_err 'E' '003'
+                                  c_msgid lw_atras_err-rhandpl space
+                                  space space.
+      ENDLOOP.
+
+      LOOP AT i_atras_isin_err INTO lw_atras_err.
+        PERFORM append_log USING lw_atras_err 'E' '000'
+                                  c_msgid 'ISIN Not Found' lw_atras_err-skursart
+                                  space space.
+      ENDLOOP.
+    ELSE.
+      LOOP AT i_atras_err INTO lw_atras_err.
+        PERFORM append_log USING lw_atras_err 'E' '000'
+                                  c_msgid 'Invalid Rate Type' lw_atras_err-skursart
+                                  space space.
+      ENDLOOP.
+
+      LOOP AT i_atras_exchange_err INTO lw_atras_err.
+        PERFORM append_log USING lw_atras_err 'E' '003'
+                                  c_msgid lw_atras_err-rhandpl space
+                                  space space.
+      ENDLOOP.
+
+      LOOP AT i_atras_isin_err INTO lw_atras_err.
+        PERFORM append_log USING lw_atras_err 'E' '000'
+                                  c_msgid 'ISIN Not Found' lw_atras_err-skursart
+                                  space space.
+      ENDLOOP.
+
+      CALL FUNCTION 'TB_DATAFEED_MODIFY_ATRAS'
+        EXPORTING
+          full_lock       = abap_false
+        TABLES
+          mod_atras       = li_atras
+          error_mod_atras = li_error_atras
+        EXCEPTIONS
+          empty_table     = 1
+          foreign_lock    = 2
+          system_failure  = 3
+          OTHERS          = 4.
+      CASE sy-subrc.
+
+        WHEN 0.
+*         Market price has been successfully updated.
+          LOOP AT li_atras INTO lw_atras.
+            PERFORM append_log USING lw_atras 'S'
+                                      '023' c_msgid
+                                      space space
+                                      space space.
+          ENDLOOP.
+
+        WHEN 2.
+*         Maintenance of security prices is blocked by ...
+          SORT li_error_atras BY rantyp ranl rhandpl skursart dkurs.
+          PERFORM append_table_to_log USING li_atras li_error_atras
+                                            'E' '542' 'T2'
+                                            sy-msgv1 space
+                                            space space.
+        WHEN 3 OR 4.
+
+*         Error ... when blocking table ...
+          lv_subrc = sy-subrc.
+          SORT li_error_atras BY rantyp ranl rhandpl skursart dkurs.
+          PERFORM append_table_to_log USING li_atras li_error_atras
+                                            'E' '536' 'T2'
+                                            lv_subrc 'ATRAS'
+                                            space space.
+        WHEN OTHERS.
+      ENDCASE.
+    ENDIF.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*  FORM APPEND_LOG                                                     *
+*&---------------------------------------------------------------------*
+FORM append_log USING lp_atras TYPE atras
+                       lp_msgty TYPE sy-msgty
+                       lp_msgno TYPE sy-msgno
+                       lp_msgid TYPE sy-msgid
+                       lp_msgv1 TYPE c
+                       lp_msgv2 TYPE c
+                       lp_msgv3 TYPE c
+                       lp_msgv4 TYPE c.
+
+  DATA lw_log TYPE t_log.
+
+* Update log information
+  MOVE-CORRESPONDING lp_atras TO lw_log.
+  READ TABLE i_twx2 INTO w_twx2 WITH KEY ranl = lw_log-ranl.
+  IF sy-subrc EQ 0.
+    lw_log-isin = w_twx2-vvranlwx.
+  ENDIF.
+  lw_log-id = lp_msgid.
+  lw_log-number = lp_msgno.
+  lw_log-type = lp_msgty.
+  lw_log-message_v1 = lp_msgv1.
+  lw_log-message_v2 = lp_msgv2.
+  lw_log-message_v3 = lp_msgv3.
+  lw_log-message_v4 = lp_msgv4.
+
+  MESSAGE ID lp_msgid TYPE lp_msgty NUMBER lp_msgno
+    WITH lp_msgv1 lp_msgv2 lp_msgv3 lp_msgv4
+    INTO lw_log-message.
+
+  APPEND lw_log TO i_log.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*  FORM APPEND_TABLE_TO_LOG                                            *
+*&---------------------------------------------------------------------*
+FORM append_table_to_log USING lpi_atras TYPE it_atras
+                               lpi_error_atras TYPE it_atras
+                               lp_msgty TYPE sy-msgty
+                               lp_msgno TYPE sy-msgno
+                               lp_msgid TYPE sy-msgid
+                               lp_msgv1 TYPE c
+                               lp_msgv2 TYPE c
+                               lp_msgv3 TYPE c
+                               lp_msgv4 TYPE c.
+
+  DATA lw_atras TYPE atras.
+
+  LOOP AT lpi_atras INTO lw_atras.
+    READ TABLE lpi_error_atras TRANSPORTING NO FIELDS
+      WITH KEY  rantyp = lw_atras-rantyp
+                ranl = lw_atras-ranl
+                rhandpl = lw_atras-rhandpl
+                skursart = lw_atras-skursart
+                dkurs = lw_atras-dkurs
+       BINARY SEARCH.
+    IF sy-subrc = 0.
+      PERFORM append_log USING lw_atras
+            lp_msgty lp_msgno lp_msgid
+            lp_msgv1 lp_msgv2 lp_msgv3 lp_msgv4.
+    ELSE.
+      PERFORM append_log
+        USING lw_atras
+             'S' '023' c_msgid space space space space.
+    ENDIF.
+  ENDLOOP.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*  FORM UPLOAD                                                         *
+*&---------------------------------------------------------------------*
+FORM upload.
+
+  IF p_pc EQ 'X'.
+    IF p_fpc IS INITIAL.
+      MESSAGE e024(ZAIA) WITH 'No File(s) Found'.
+    ELSE.
+      PERFORM upload_from_disk.
+    ENDIF.
+  ELSE.
+    PERFORM get_file_list USING p_fapp.
+    IF i_filepath[] IS INITIAL.
+      MESSAGE e024(ZAIA) WITH 'No File(s) Found'.
+    ELSE.
+      LOOP AT i_filepath INTO w_filepath.
+        PERFORM upload_from_unix.
+      ENDLOOP.
+    ENDIF.
+  ENDIF.
+ENDFORM.
+
+*---------------------------------------------------------------*
+*  FORM UPLOAD_FROM_DISK                                        *
+*---------------------------------------------------------------*
+FORM upload_from_disk.
+  DATA: lv_error      TYPE boolean,
+        lv_message(100) TYPE c,
+        lv_ext        TYPE string,
+        lv_len        TYPE i.
+  DATA: lv_upload_codepage TYPE abap_encoding,
+        lt_raw_in          TYPE STANDARD TABLE OF string,
+        lw_raw_in          TYPE string,
+        lv_fname           TYPE text255,
+        lv_file            TYPE string,
+        lv_overwrite  LIKE rcgfiletr-iefow,
+        lv_backup     TYPE string.
+  DATA: lr_csv TYPE REF TO cl_rsda_csv_converter.
+
+  REFRESH: lt_raw_in.
+
+  CLEAR: lv_file.
+
+  lv_file = p_fpc.
+
+  GET PARAMETER ID 'UCP' FIELD lv_upload_codepage.           "note 758870
+
+  CALL METHOD cl_gui_frontend_services=>gui_upload
+    EXPORTING
+      filename        = lv_file
+      filetype        = 'ASC'
+      codepage        = lv_upload_codepage
+      has_field_separator     = abap_true
+    CHANGING
+      data_tab        = lt_raw_in
+    EXCEPTIONS
+      file_open_error = 1
+      file_read_error = 2
+      OTHERS          = 18.
+
+  CASE sy-subrc.
+    WHEN 1.
+      MESSAGE e704(fb) WITH p_fpc+2 p_fpc+0(2).
+    WHEN 2.
+      MESSAGE e705(fb) WITH p_fpc+2 p_fpc+0(2).
+    WHEN OTHERS.
+  ENDCASE.
+
+  CALL METHOD cl_rsda_csv_converter=>create
+    RECEIVING
+      r_r_conv    = lr_csv.
+
+  LOOP AT lt_raw_in INTO lw_raw_in.
+    IF p_mkt EQ 'X'.
+      CALL METHOD lr_csv->csv_to_structure
+        EXPORTING
+          i_data   = lw_raw_in
+        IMPORTING
+          e_s_data = w_mktsrc.
+
+      APPEND w_mktsrc TO i_mktsrc.
+    ELSE.
+      CALL METHOD lr_csv->csv_to_structure
+        EXPORTING
+          i_data   = lw_raw_in
+        IMPORTING
+          e_s_data = w_idxsrc.
+
+      APPEND w_idxsrc TO i_idxsrc.
+    ENDIF.
+  ENDLOOP.
+
+  IF p_header EQ 'X'.
+    IF p_mkt EQ 'X'.
+      DELETE i_mktsrc INDEX 1.
+    ELSE.
+      DELETE i_idxsrc INDEX 1.
+    ENDIF.
+  ENDIF.
+
+ENDFORM.                    "UPLOAD_FROM_DISK
+
+*---------------------------------------------------------------*
+*  FORM GET_FILE_LIST                                      *
+*---------------------------------------------------------------*
+FORM get_file_list USING pi_p_file.
+
+  DATA: lv_dir_name   TYPE eps2filnam.
+  DATA: li_file_list TYPE TABLE OF eps2fili,
+        lw_file_list TYPE eps2fili,
+        lv_docid     TYPE dsvasdocid,
+        lv_cdocid    TYPE text255,
+        lv_cpath     TYPE text255,
+        lv_cfname    TYPE text255,
+        lv_cext      TYPE text255,
+        lv_len       TYPE i.
+
+  REFRESH: i_filepath, li_file_list.
+  CLEAR: lv_docid, lv_cdocid, lv_cpath, lv_cfname, lv_cext.
+
+  lv_dir_name = pi_p_file.
+
+  CALL FUNCTION 'EPS2_GET_DIRECTORY_LISTING'
+    EXPORTING
+      iv_dir_name            = lv_dir_name
+    TABLES
+      dir_list               = li_file_list
+    EXCEPTIONS
+      invalid_eps_subdir     = 1
+      sapgparam_failed       = 2
+      build_directory_failed = 3
+      no_authorization       = 4
+      read_directory_failed  = 5
+      too_many_read_errors   = 6
+      empty_directory_list   = 7
+      OTHERS                 = 8.
+
+*1) --> get multiple files within the folder
+  IF sy-subrc = 0.
+    SORT li_file_list.
+    DELETE ADJACENT DUPLICATES FROM li_file_list.
+
+    LOOP AT li_file_list INTO lw_file_list.
+      CLEAR w_filepath.
+      w_filepath-filepath = lv_dir_name.
+      w_filepath-filename = lw_file_list-name.
+      APPEND w_filepath TO i_filepath.
+    ENDLOOP.
+  ELSE.
+    CLEAR w_filepath.
+
+*       --> check if the file exist
+    OPEN DATASET lv_dir_name
+    FOR INPUT IN TEXT MODE ENCODING DEFAULT.
+
+    IF sy-subrc = 0.
+      CLOSE DATASET lv_dir_name.
+      lv_docid = lv_dir_name.
+
+      lv_cdocid = lv_docid.
+
+      CALL FUNCTION 'Z_DSVAS_DOC_FILENAME_SPLIT'
+        EXPORTING
+          pf_docid     = lv_cdocid
+        IMPORTING
+          pf_directory = lv_cpath
+          pf_filename  = lv_cfname
+          pf_extension = lv_cext.
+
+      IF lv_cfname IS NOT INITIAL.
+        w_filepath-filepath = lv_cpath.
+        w_filepath-filename = lv_cfname.
+
+        APPEND w_filepath TO i_filepath.
+      ENDIF.
+    ELSE.
+*       --> show the error record
+      MESSAGE i398(00) WITH text-e01 '' '' ''.
+    ENDIF.
+
+  ENDIF.
+
+  SORT i_filepath.
+  DELETE ADJACENT DUPLICATES FROM i_filepath.
+ENDFORM.                    "GET_FILE_LIST
+
+*---------------------------------------------------------------*
+*  FORM UPLOAD_FROM_UNIX                                        *
+*---------------------------------------------------------------*
+FORM upload_from_unix.
+
+  DATA: l_upload_codepage TYPE abap_encoding.
+  DATA: lt_raw_in          TYPE STANDARD TABLE OF string,
+        lw_raw_in          TYPE string,
+        lv_ext             TYPE string,
+        lw_file TYPE string,
+        li_mktsrc TYPE STANDARD TABLE OF t_mktsrc,
+        lw_mktsrc TYPE t_mktsrc,
+        li_idxsrc TYPE STANDARD TABLE OF t_idxsrc,
+        lw_idxsrc TYPE t_idxsrc.
+  DATA: lr_csv TYPE REF TO cl_rsda_csv_converter.
+  GET PARAMETER ID 'UCP' FIELD l_upload_codepage.
+  CLEAR: gv_file, gv_filename.
+  REFRESH: li_mktsrc, li_idxsrc.
+  CONCATENATE w_filepath-filepath w_filepath-filename INTO gv_file.
+  SPLIT w_filepath-filename AT '.' INTO gv_filename lv_ext.
+
+  IF l_upload_codepage IS INITIAL.
+    OPEN DATASET gv_file IN TEXT MODE FOR INPUT ENCODING DEFAULT.
+  ELSE.
+    OPEN DATASET gv_file IN LEGACY TEXT MODE CODE PAGE
+      l_upload_codepage FOR INPUT.
+  ENDIF.
+
+  IF sy-subrc NE 0.
+    MESSAGE e002(fb) WITH gv_file.
+  ENDIF.
+
+  DO.
+    CLEAR w_mktsrc.
+    READ DATASET gv_file INTO lw_file.
+    IF sy-subrc NE 0.
+      EXIT.
+    ENDIF.
+    APPEND lw_file TO lt_raw_in.
+  ENDDO.
+
+  CLOSE DATASET gv_file.
+
+  IF p_back IS NOT INITIAL AND p_test IS INITIAL.
+    PERFORM write_to_server TABLES lt_raw_in USING gv_file p_back.
+    PERFORM del_file USING 'ZDEL' gv_file.
+  ENDIF.
+
+  CALL METHOD cl_rsda_csv_converter=>create
+    RECEIVING
+      r_r_conv    = lr_csv.
+
+  LOOP AT lt_raw_in INTO lw_raw_in.
+    IF p_mkt EQ 'X'.
+      CALL METHOD lr_csv->csv_to_structure
+        EXPORTING
+          i_data   = lw_raw_in
+        IMPORTING
+          e_s_data = lw_mktsrc.
+
+      APPEND lw_mktsrc TO li_mktsrc.
+    ELSE.
+      CALL METHOD lr_csv->csv_to_structure
+        EXPORTING
+          i_data   = lw_raw_in
+        IMPORTING
+          e_s_data = lw_idxsrc.
+
+      APPEND lw_idxsrc TO li_idxsrc.
+    ENDIF.
+  ENDLOOP.
+
+  IF p_header EQ 'X'.
+    IF p_mkt EQ 'X'.
+      DELETE li_mktsrc INDEX 1.
+    ELSE.
+      DELETE li_idxsrc INDEX 1.
+    ENDIF.
+  ENDIF.
+
+  APPEND LINES OF li_mktsrc TO i_mktsrc.
+  APPEND LINES OF li_idxsrc TO i_idxsrc.
+ENDFORM.                    "UPLOAD_FROM_UNIX
+
+*---------------------------------------------------------------*
+*  FORM WRITE_TO_SERVER                                    *
+*---------------------------------------------------------------*
+FORM write_to_server TABLES l_file USING pi_file pi_path.
+
+  DATA: lv_mess(200) TYPE c,
+        lv_filepath(500) TYPE c,
+        w_file TYPE string,
+        lv_cpath  TYPE text255,
+        lv_cfname TYPE text255,
+        lv_cext   TYPE text255,
+        lv_len    TYPE i,
+        lv_docid TYPE  text255.
+
+  CLEAR: lv_filepath, lv_docid.
+
+  lv_len = strlen( pi_path ) - 1.
+  IF pi_path+lv_len(1) <> '/'.
+     CONCATENATE pi_path '/' INTO pi_path.
+  ENDIF.
+
+  lv_docid = pi_file.
+
+  CALL FUNCTION 'Z_DSVAS_DOC_FILENAME_SPLIT'
+    EXPORTING
+      pf_docid     = lv_docid
+    IMPORTING
+      pf_directory = lv_cpath
+      pf_filename  = lv_cfname
+      pf_extension = lv_cext.
+
+      CONCATENATE pi_path lv_cfname
+      INTO lv_filepath.
+
+  OPEN DATASET lv_filepath FOR OUTPUT IN TEXT MODE
+  ENCODING DEFAULT MESSAGE lv_mess.
+  IF sy-subrc = 0.
+    LOOP AT l_file INTO w_file.
+      TRANSFER w_file TO lv_filepath.
+    ENDLOOP.
+
+    CLOSE DATASET lv_filepath.
+  ENDIF.
+
+ENDFORM.                    " WRITE_TO_SERVER
+
+*&---------------------------------------------------------------------*
+*  FORM DEL_FILE                                                         *
+*&---------------------------------------------------------------------*
+FORM del_file USING pi_command
+                      pi_lv_file.
+
+  DATA li_execprotocol TYPE TABLE OF btcxpm.
+  DATA lw_execprotocol TYPE btcxpm.
+  DATA lv_exitcode TYPE extcmdexex-exitcode.
+  DATA lw_param1 TYPE sxpgcolist-parameters.
+  DATA lw_param2 TYPE char1024.
+
+  CONSTANTS: lc_funcname TYPE rs38l_fnam
+  VALUE 'SXPG_COMMAND_EXECUTE_LONG'.
+
+  CLEAR lv_exitcode.
+  REFRESH li_execprotocol.
+
+* Call OS Command to move and rename the file
+
+  CONCATENATE '''%' pi_lv_file '%''' INTO lw_param1.
+
+  CALL FUNCTION 'SXPG_COMMAND_EXECUTE_LONG'
+    EXPORTING
+      commandname                   = pi_command
+      additional_parameters         = lw_param1
+      long_params                   = lw_param2
+      dialog                        = space
+    IMPORTING
+*     STATUS                        =
+      exitcode                      = lv_exitcode
+    TABLES
+      exec_protocol                 = li_execprotocol
+    EXCEPTIONS
+      no_permission                 = 1
+      command_not_found             = 2
+      parameters_too_long           = 3
+      security_risk                 = 4
+      wrong_check_call_interface    = 5
+      program_start_error           = 6
+      program_termination_error     = 7
+      x_error                       = 8
+      parameter_expected            = 9
+      too_many_parameters           = 10
+      illegal_command               = 11
+      wrong_asynchronous_parameters = 12
+      cant_enq_tbtco_entry          = 13
+      jobcount_generation_error     = 14
+      OTHERS                        = 15.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*  FORM UPLOAD                                                         *
+*&---------------------------------------------------------------------*
+FORM upload_excel_file TABLES   p_table
+                        USING   p_file
+                                p_startcol
+                                p_startrow
+                                p_endcol
+                                p_endrow.
+
+  DATA : lt_intern TYPE  kcde_cells OCCURS 0 WITH HEADER LINE,
+         lv_index TYPE i.
+
+  FIELD-SYMBOLS: <fs>.
+
+  CALL FUNCTION 'KCD_EXCEL_OLE_TO_INT_CONVERT'
+    EXPORTING
+      FILENAME                      = p_file
+      I_BEGIN_COL                   = p_startcol
+      I_BEGIN_ROW                   = p_startrow
+      I_END_COL                     = p_endcol
+      I_END_ROW                     = p_endrow
+    TABLES
+      INTERN                        = lt_intern
+    EXCEPTIONS
+      INCONSISTENT_PARAMETERS       = 1
+      UPLOAD_OLE                    = 2
+      OTHERS                        = 3
+            .
+  IF SY-SUBRC <> 0.
+    MESSAGE e024(ZAIA) WITH 'Error uploading file'.
+  ENDIF.
+
+  IF lt_intern[] IS INITIAL.
+    MESSAGE e024(ZAIA) WITH 'No data uploaded'.
+  ELSE.
+    SORT lt_intern BY row col.
+    LOOP AT lt_intern.
+      MOVE lt_intern-col TO lv_index.
+      ASSIGN COMPONENT lv_index OF STRUCTURE p_table TO <fs>.
+      MOVE lt_intern-value TO <fs>.
+      AT END OF row.
+        APPEND p_table.
+        CLEAR p_table.
+      ENDAT.
+    ENDLOOP.
+  ENDIF.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*  FORM DISPLAY_ALV                                                    *
+*&---------------------------------------------------------------------*
+FORM display_alv USING pi_table TYPE STANDARD TABLE..
+
+  DATA: lo_events              TYPE REF TO lcl_handle_events.
+
+  SORT i_log BY isin.
+
+  TRY.
+      cl_salv_table=>factory(
+        IMPORTING
+          r_salv_table = o_table
+        CHANGING
+          t_table      = pi_table ).
+    CATCH cx_salv_msg.                                  "#EC NO_HANDLER
+  ENDTRY.
+  o_columns_tab = o_table->get_columns( ).
+  o_columns_tab->set_optimize( abap_true ).
+  o_display = o_table->get_display_settings( ).
+  o_functions = o_table->get_functions( ).
+  o_functions->set_all( abap_true ).
+  IF p_test EQ 'X'.
+    o_display->set_list_header( c_title_test ).
+  ELSE.
+    o_display->set_list_header( c_title ).
+  ENDIF.
+
+  PERFORM build_fieldcatalog.
+
+  o_events = o_table->get_event( ).
+  CREATE OBJECT lo_events.
+  SET HANDLER lo_events->on_single_click FOR o_events.
+
+  IF p_esend IS NOT INITIAL AND s_bname IS NOT INITIAL.
+    PERFORM send_email.
+  ENDIF.
+
+  TRY.
+      o_table->display( ).
+    CATCH cx_salv_msg.                                  "#EC NO_HANDLER
+  ENDTRY.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*  FORM SEND_EMAIL                                                     *
+*&---------------------------------------------------------------------*
+FORM send_email.
+  PERFORM create_excel.
+  PERFORM send.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*  FORM CREATE_EXCEL                                                   *
+*&---------------------------------------------------------------------*
+FORM create_excel.
+  DATA: li_fcat TYPE lvc_t_fcat,
+        lw_fcat LIKE LINE OF li_fcat,
+        lv_row TYPE i,
+        lv_column TYPE i,
+        lv_string TYPE text128.
+
+  FIELD-SYMBOLS: <fs_field>.
+  DATA: lw_columns    TYPE REF TO cl_salv_columns_table.
+  DATA: lw_aggr       TYPE REF TO cl_salv_aggregations.
+      lw_columns  = o_table->get_columns( ).
+      lw_aggr     = o_table->get_aggregations( ).
+      li_fcat     =  cl_salv_controller_metadata=>get_lvc_fieldcatalog(
+                                    r_columns      = lw_columns
+                                    r_aggregations = lw_aggr ).
+
+      ADD 1 to lv_row.
+      DELETE li_fcat WHERE tech EQ 'X'.
+      DELETE li_fcat WHERE no_out EQ 'X'.
+      LOOP AT li_fcat INTO lw_fcat WHERE tech EQ SPACE OR no_out EQ SPACE.
+        ADD 1 to lv_column.
+        insert_cell 1 lv_row lv_column lw_fcat-scrtext_l SPACE SPACE SPACE '1111' SPACE.
+      ENDLOOP.
+
+      CLEAR lv_column.
+      IF p_mkt EQ 'X'.
+        LOOP AT i_log INTO w_log.
+
+          ADD 1 to lv_row.
+
+          LOOP AT li_fcat INTO lw_fcat WHERE tech EQ SPACE OR no_out EQ SPACE.
+              ADD 1 to lv_column.
+
+              ASSIGN COMPONENT lw_fcat-fieldname OF STRUCTURE w_log TO <fs_field>.
+              IF <fs_field> IS ASSIGNED.
+                CLEAR lv_string.
+                lv_string = <fs_field>.
+                insert_cell 1 lv_row lv_column lv_string SPACE SPACE SPACE '1111' SPACE.
+              ENDIF.
+          ENDLOOP.
+          CLEAR lv_column.
+        ENDLOOP.
+      ELSE.
+        LOOP AT i_idxsrc INTO w_idxsrc.
+
+          ADD 1 to lv_row.
+
+          LOOP AT li_fcat INTO lw_fcat WHERE tech EQ SPACE.
+              ADD 1 to lv_column.
+
+              ASSIGN COMPONENT lw_fcat-fieldname OF STRUCTURE w_idxsrc TO <fs_field>.
+              IF <fs_field> IS ASSIGNED.
+                CLEAR lv_string.
+                lv_string = <fs_field>.
+                insert_cell 1 lv_row lv_column lv_string SPACE SPACE SPACE '1111' SPACE.
+              ENDIF.
+          ENDLOOP.
+          CLEAR lv_column.
+        ENDLOOP.
+      ENDIF.
+
+*     Create EXCEL XML
+      REFRESH w_xml_table.
+      CLEAR w_xml_size.
+      CALL FUNCTION 'ZBC_CREATE_EXCEL'
+        EXPORTING
+          i_excel_data       = i_excel
+        IMPORTING
+          e_doc_type         = w_doc_type
+          e_xml_table        = w_xml_table
+          e_xml_size         = w_xml_size
+        EXCEPTIONS
+          posizione_mancante = 1
+          posizione_ripetuta = 2
+          OTHERS             = 3.
+
+      IF sy-subrc <> 0.
+        MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+                WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+      ENDIF.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*  FORM SEND                                                           *
+*&---------------------------------------------------------------------*
+FORM send.
+  DATA: li_attachment TYPE STANDARD TABLE OF rmps_post_content,
+        lw_attachment LIKE LINE OF li_attachment.
+  DATA: li_recipients TYPE ztt_recipients,
+        lw_recipients TYPE zbc_recipients,
+        lw_subject TYPE string,
+        lw_return TYPE bapiret2,
+        li_body TYPE bcsy_text,
+        lw_body TYPE soli,
+        lv_message TYPE string.
+
+  REFRESH li_attachment.
+  CLEAR: lw_attachment, li_attachment.
+
+  IF p_mkt EQ 'X'.
+    CONCATENATE 'Market Price Upload Log' sy-datum INTO lw_subject SEPARATED BY SPACE.
+    CONCATENATE 'MarketPriceUpload_' sy-datum INTO lw_attachment-subject.
+  ELSE.
+    CONCATENATE 'Index Ratio Upload Log' sy-datum INTO lw_subject SEPARATED BY SPACE.
+    CONCATENATE 'IndexRatioUpload_' sy-datum INTO lw_attachment-subject.
+  ENDIF.
+
+  MOVE 'XLS'       TO lw_attachment-doc_type. "w_doc_type
+  MOVE 'X'         TO lw_attachment-binary.
+  MOVE w_xml_table TO lw_attachment-cont_hex.
+  MOVE w_xml_size  TO lw_attachment-docsize.
+  APPEND lw_attachment TO li_attachment.
+
+  REFRESH li_recipients.
+  CLEAR lw_recipients.
+
+  LOOP AT s_bname.
+    MOVE s_bname-low TO lw_recipients-email.
+    APPEND lw_recipients TO li_recipients.
+  ENDLOOP.
+
+  IF p_test EQ 'X'.
+    CONCATENATE 'TESTRUN - Please find attached' w_text INTO lv_message SEPARATED BY SPACE.
+  ELSE.
+    CONCATENATE 'Please find attached' w_text INTO lv_message SEPARATED BY SPACE.
+  ENDIF.
+* Send EMAIL
+  CALL FUNCTION 'ZBC_SEND_EMAIL'
+    EXPORTING
+      subject     = lw_subject
+      message     = lv_message
+      mailbody    = li_body
+      attachments = li_attachment[]
+      recipients  = li_recipients
+    IMPORTING
+      return      = lw_return
+    EXCEPTIONS
+      no_body     = 1
+      bcs_error   = 2
+      OTHERS      = 3.
+
+  IF sy-subrc <> 0.
+    MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+            WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+  ELSE.
+    MESSAGE s024(ZAIA) WITH 'Document Sent'.
+  ENDIF.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*  FORM BUILD_FIELDCATALOG                                             *
+*&---------------------------------------------------------------------*
+FORM build_fieldcatalog.
+
+  IF p_mkt EQ 'X'.
+   TRY.
+        o_column ?= o_columns_tab->get_column( 'MANDT' ).
+        o_column->set_technical( abap_true ).
+        o_column ?= o_columns_tab->get_column( 'RANTYP' ).
+        o_column->set_visible( abap_false ).
+        o_column ?= o_columns_tab->get_column( 'PKUR' ).
+        o_column->set_visible( abap_false ).
+        o_column ?= o_columns_tab->get_column( 'SOBJEKT' ).
+        o_column->set_visible( abap_false ).
+        o_column ?= o_columns_tab->get_column( 'RBEAR' ).
+        o_column->set_visible( abap_false ).
+        o_column ?= o_columns_tab->get_column( 'DBEAR' ).
+        o_column->set_visible( abap_false ).
+        o_column ?= o_columns_tab->get_column( 'TBEAR' ).
+        o_column->set_visible( abap_false ).
+        o_column ?= o_columns_tab->get_column( 'RFGEB' ).
+        o_column->set_visible( abap_false ).
+        o_column ?= o_columns_tab->get_column( 'DFREI' ).
+        o_column->set_visible( abap_false ).
+        o_column ?= o_columns_tab->get_column( 'TFREI' ).
+        o_column->set_visible( abap_false ).
+        o_column ?= o_columns_tab->get_column( 'SKZUSA' ).
+        o_column->set_visible( abap_false ).
+        o_column ?= o_columns_tab->get_column( 'SKABSCH' ).
+        o_column->set_visible( abap_false ).
+        o_column ?= o_columns_tab->get_column( 'SKHERK' ).
+        o_column->set_visible( abap_false ).
+
+        o_column ?= o_columns_tab->get_column( 'ZZPRI_TYPE' ).
+        o_column->set_visible( abap_false ).
+        o_column ?= o_columns_tab->get_column( 'ZZPRI_DATE' ).
+        o_column->set_visible( abap_false ).
+        o_column ?= o_columns_tab->get_column( 'ZZPRI_HIER' ).
+        o_column->set_visible( abap_false ).
+        o_column ?= o_columns_tab->get_column( 'ZZPRI_LEV' ).
+        o_column->set_visible( abap_false ).
+        o_column ?= o_columns_tab->get_column( 'ZZPRI_LEV_LOGIC' ).
+        o_column->set_visible( abap_false ).
+        o_column ?= o_columns_tab->get_column( 'ZZPRI_PROVIDER' ).
+        o_column->set_visible( abap_false ).
+
+        o_column ?= o_columns_tab->get_column( 'ID' ).
+        o_column->set_visible( abap_false ).
+        o_column ?= o_columns_tab->get_column( 'NUMBER' ).
+        o_column->set_visible( abap_false ).
+        o_column ?= o_columns_tab->get_column( 'MESSAGE_V1' ).
+        o_column->set_visible( abap_false ).
+        o_column ?= o_columns_tab->get_column( 'MESSAGE_V2' ).
+        o_column->set_visible( abap_false ).
+        o_column ?= o_columns_tab->get_column( 'MESSAGE_V3' ).
+        o_column->set_visible( abap_false ).
+        o_column ?= o_columns_tab->get_column( 'MESSAGE_V4' ).
+        o_column->set_visible( abap_false ).
+        o_column ?= o_columns_tab->get_column( 'LOG_NO' ).
+        o_column->set_technical( abap_true ).
+        o_column ?= o_columns_tab->get_column( 'LOG_MSG_NO' ).
+        o_column->set_technical( abap_true ).
+        o_column ?= o_columns_tab->get_column( 'MESSAGE' ).
+        o_column->set_cell_type( if_salv_c_cell_type=>hotspot ).
+
+      CATCH cx_salv_not_found.                            "#EC NO_HANDLER
+    ENDTRY.
+  ELSE.
+    TRY.
+        o_column ?= o_columns_tab->get_column( 'ERROR' ).
+        o_column->set_technical( abap_true ).
+    CATCH cx_salv_not_found.
+    ENDTRY.
+    PERFORM set_column_text USING:
+     'IDX' 0 '' '' 'Index Name' 30 SPACE,
+     'DATE' 0 '' '' 'Date' 30 SPACE,
+     'RATIO' 0 '' '' 'Index Ratio' 30 SPACE,
+     'MESSAGE' 0 '' '' 'Message' 30 SPACE.
+  ENDIF.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*  FORM SET_COLUMN_TEXT                                                *
+*&---------------------------------------------------------------------*
+FORM set_column_text USING pi_fieldname TYPE lvc_fname
+                           pi_color TYPE lvc_col
+                           pi_short TYPE scrtext_s
+                           pi_medium TYPE scrtext_m
+                           pi_long TYPE scrtext_l
+                           pi_outlen TYPE lvc_outlen
+                           pi_noout TYPE c.
+
+  DATA: ls_color TYPE lvc_s_colo.
+
+  TRY.
+      o_column ?= o_columns_tab->get_column( pi_fieldname ).
+      ls_color-col = pi_color.
+      o_column->set_color( ls_color ).
+      IF pi_short NE SPACE.
+        o_column->set_short_text( pi_short ).
+      ENDIF.
+
+      IF pi_medium NE SPACE.
+        o_column->set_medium_text( pi_medium ).
+      ENDIF.
+
+      IF pi_long NE SPACE.
+        o_column->set_long_text( pi_long ).
+      ENDIF.
+
+      IF pi_outlen NE 0.
+        o_column->set_output_length( pi_outlen ).
+      ENDIF.
+      IF pi_noout EQ 'X'.
+        o_column->set_visible( abap_false ).
+      ENDIF.
+    CATCH cx_salv_not_found.                        "#EC NO_HANDLER
+  ENDTRY.
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*  FORM SHOW_LONG_MESSAGE                                              *
+*&---------------------------------------------------------------------*
+FORM show_long_message USING lp_row TYPE i
+                                 lp_column TYPE c.
+
+  DATA lw_help_info TYPE help_info.
+  DATA li_dynpselect TYPE TABLE OF dselc.
+  DATA li_dynpvaluetab TYPE TABLE OF dval.
+  DATA lw_log TYPE t_log.
+
+  IF lp_column = 'MESSAGE'.
+    READ TABLE i_log INTO lw_log INDEX lp_row.
+    IF sy-subrc = 0.
+
+      lw_help_info-call = 'D'.
+      lw_help_info-object = 'N'.
+      lw_help_info-docuid = 'NA'.
+      lw_help_info-spras = sy-langu.
+      lw_help_info-messageid = lw_log-id.
+      lw_help_info-messagenr = lw_log-number.
+      lw_help_info-msgv1 = lw_log-message_v1.
+      lw_help_info-msgv2 = lw_log-message_v2.
+      lw_help_info-msgv3 = lw_log-message_v3.
+      lw_help_info-msgv4 = lw_log-message_v4.
+      lw_help_info-message = lw_log-message.
+
+      CALL FUNCTION 'HELP_START'
+        EXPORTING
+          help_infos         = lw_help_info
+*         PROPERTY_BAG       =
+*       IMPORTING
+*         SELECTION          =
+*         SELECT_VALUE       =
+*         RSMDY_RET          =
+        TABLES
+          dynpselect         = li_dynpselect
+          dynpvaluetab       = li_dynpvaluetab.
+
+    ENDIF.
+  ENDIF.
+ENDFORM. " SHOW_LONG_MESSAGE
